@@ -8,4 +8,8 @@ cd frontend
 
 npm install
 
-npm run dev (pentru a da start la site)6
+npm install axios react-router-dom(daca nu e instalat) Axios face legatura intre backend si frontend
+
+npm run dev (pentru a da start la site)
+
+cont pentru site username: admin password: admin
