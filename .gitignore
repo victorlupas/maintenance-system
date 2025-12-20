@@ -1,1 +1,11 @@
 __pycache__
+# datasets (do not commit)
+backend/data/*.csv
+backend/data/*.txt
+backend/data/*.zip
+backend/data/*.7z
+backend/data/*.rar
+backend/data/*.json
+
+# keep folder
+!backend/data/.gitkeep

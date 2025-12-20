@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from "react";
+// frontend/src/pages/PredictiveMaintenanceSystem.jsx
+
+import React, { useEffect, useMemo, useState } from "react";
 import {
   LineChart,
   Line,
@@ -16,142 +18,92 @@ import {
   TrendingUp,
   Calendar,
   Download,
+  LogOut,
 } from "lucide-react";
-
 import { api } from "../apiClient";
+import { useNavigate } from "react-router-dom";
 
 const PredictiveMaintenanceSystem = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
+
+  // Data from backend
   const [sensorData, setSensorData] = useState([]);
+  const [equipment, setEquipment] = useState([]);
+
+  // Derived lists (computed client-side)
   const [anomalies, setAnomalies] = useState([]);
   const [predictions, setPredictions] = useState([]);
   const [alerts, setAlerts] = useState([]);
-  const [equipment, setEquipment] = useState([]);
+
   const [isProcessing, setIsProcessing] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
 
-  const [user, setUser] = useState(null);
+  // Auth UI
+  const [me, setMe] = useState(null);
+  const navigate = useNavigate();
 
+  // thresholds kept for Settings UI (not used by anomaly detection anymore)
   const [thresholds, setThresholds] = useState({
     temperature: { warning: 75, critical: 85 },
     vibration: { warning: 3.5, critical: 4.5 },
     pressure: { warning: 95, critical: 110 },
   });
 
-  const logout = () => {
-    localStorage.removeItem("access");
-    localStorage.removeItem("refresh");
-    window.location.href = "/login";
-  };
-
-  const fetchUser = async () => {
+  // ----------------------------
+  // Auth helpers
+  // ----------------------------
+  const fetchMe = async () => {
     try {
       const res = await api.get("/api/auth/me/");
-      setUser(res.data);
-    } catch (err) {
-      logout();
+      setMe(res.data);
+    } catch {
+      setMe(null);
     }
   };
 
-  // Generate synthetic sensor data
-  const generateSyntheticData = () => {
+  const onLogout = () => {
+    localStorage.removeItem("access");
+    localStorage.removeItem("refresh");
+    navigate("/login");
+  };
+
+  // ----------------------------
+  // Backend data fetch
+  // ----------------------------
+  const fetchSyntheticData = async () => {
     setIsProcessing(true);
+    setLoadErr("");
+    try {
+      const res = await api.get("/api/synthetic/");
+      const eq = res.data.equipment || [];
+      const rows = res.data.sensorData || [];
 
-    const equipmentProfiles = [
-      { id: "PUMP-001", name: "Hydraulic Pump A", type: "pump", health: "good" },
-      { id: "MOTOR-002", name: "Conveyor Motor B", type: "motor", health: "warning" },
-      { id: "COMP-003", name: "Air Compressor C", type: "compressor", health: "good" },
-      { id: "BEAR-004", name: "Bearing Assembly D", type: "bearing", health: "critical" },
-      { id: "VALVE-005", name: "Control Valve E", type: "valve", health: "good" },
-    ];
+      setEquipment(eq);
+      setSensorData(rows);
 
-    setEquipment(equipmentProfiles);
-
-    const data = [];
-    const now = Date.now();
-
-    equipmentProfiles.forEach((eq) => {
-      for (let i = 0; i < 100; i++) {
-        const timestamp = now - (100 - i) * 3600000; // hourly data for last 100 hours
-        const baseTemp = eq.health === "critical" ? 80 : eq.health === "warning" ? 70 : 65;
-        const baseVib = eq.health === "critical" ? 4.0 : eq.health === "warning" ? 3.2 : 2.5;
-        const basePres = eq.health === "critical" ? 105 : eq.health === "warning" ? 90 : 80;
-
-        const anomalyFactor =
-          eq.health === "critical" && i > 80 ? 1.15 : eq.health === "warning" && i > 90 ? 1.08 : 1;
-
-        data.push({
-          equipmentId: eq.id,
-          equipmentName: eq.name,
-          timestamp: new Date(timestamp).toISOString(),
-          temperature: baseTemp + (Math.random() * 10 - 5) * anomalyFactor,
-          vibration: baseVib + (Math.random() * 0.8 - 0.4) * anomalyFactor,
-          pressure: basePres + (Math.random() * 15 - 7.5) * anomalyFactor,
-          powerConsumption: 100 + Math.random() * 20,
-        });
-      }
-    });
-
-    setSensorData(data);
-    performAnomalyDetection(data, equipmentProfiles);
-    generatePredictions(data, equipmentProfiles);
-
-    setTimeout(() => setIsProcessing(false), 700);
+      // recompute derived outputs client-side
+      performAnomalyDetection(rows, eq);
+      generatePredictions(rows, eq);
+    } catch (e) {
+      console.error(e);
+      setLoadErr(
+        "Failed to load data from backend. Make sure you're logged in and the Django server is running."
+      );
+      setEquipment([]);
+      setSensorData([]);
+      setAnomalies([]);
+      setPredictions([]);
+      setAlerts([]);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const performAnomalyDetection = (data, equipmentProfiles) => {
-    const detected = [];
-
-    equipmentProfiles.forEach((eq) => {
-      const eqData = data.filter((d) => d.equipmentId === eq.id).slice(-24);
-
-      eqData.forEach((reading) => {
-        let anomalyScore = 0;
-        const issues = [];
-
-        if (reading.temperature > thresholds.temperature.critical) {
-          anomalyScore += 0.4;
-          issues.push("Critical temperature detected");
-        } else if (reading.temperature > thresholds.temperature.warning) {
-          anomalyScore += 0.2;
-          issues.push("High temperature warning");
-        }
-
-        if (reading.vibration > thresholds.vibration.critical) {
-          anomalyScore += 0.35;
-          issues.push("Excessive vibration detected");
-        } else if (reading.vibration > thresholds.vibration.warning) {
-          anomalyScore += 0.15;
-          issues.push("Elevated vibration levels");
-        }
-
-        if (reading.pressure > thresholds.pressure.critical) {
-          anomalyScore += 0.25;
-          issues.push("Pressure exceeds safe limits");
-        } else if (reading.pressure > thresholds.pressure.warning) {
-          anomalyScore += 0.1;
-          issues.push("Pressure above normal range");
-        }
-
-        if (anomalyScore > 0.3) {
-          detected.push({
-            equipmentId: eq.id,
-            equipmentName: eq.name,
-            timestamp: reading.timestamp,
-            anomalyScore: Math.min(anomalyScore, 1),
-            severity: anomalyScore > 0.6 ? "critical" : "warning",
-            issues,
-            explanation: `Detected ${issues.length} anomalous pattern(s): ${issues.join(", ")}`,
-          });
-        }
-      });
-    });
-
-    setAnomalies(detected.slice(-20));
-    generateAlerts(detected);
-  };
-
+  // ----------------------------
+  // Helpers
+  // ----------------------------
   const calculateTrend = (values) => {
-    if (values.length < 2) return 0;
+    if (!values || values.length < 2) return 0;
     const n = values.length;
     const sumX = (n * (n - 1)) / 2;
     const sumY = values.reduce((a, b) => a + b, 0);
@@ -160,15 +112,127 @@ const PredictiveMaintenanceSystem = () => {
     return (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
   };
 
+  // ----------------------------
+  // Alerts
+  // ----------------------------
+  const generateAlerts = (detectedAnomalies) => {
+    const newAlerts = detectedAnomalies
+      .filter((a) => a.severity === "critical" || a.severity === "warning")
+      .slice(-10)
+      .map((a, idx) => ({
+        id: `alert-${Date.now()}-${idx}`,
+        timestamp: a.timestamp,
+        equipmentName: a.equipmentName,
+        severity: a.severity,
+        message: a.explanation,
+        acknowledged: false,
+      }));
+
+    setAlerts((prev) => [...newAlerts, ...prev].slice(0, 20));
+  };
+
+  const acknowledgeAlert = (alertId) => {
+    setAlerts((prev) =>
+      prev.map((a) => (a.id === alertId ? { ...a, acknowledged: true } : a))
+    );
+  };
+
+  // ----------------------------
+  // NEW: Z-score anomaly detection (per equipment baseline)
+  // ----------------------------
+  const zscore = (x, mean, std) => {
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(mean) ||
+      !Number.isFinite(std) ||
+      std === 0
+    )
+      return 0;
+    return (x - mean) / std;
+  };
+
+  const computeStats = (values) => {
+    const arr = values.filter((v) => Number.isFinite(v));
+    if (arr.length < 5) return { mean: 0, std: 1 };
+    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const varSum = arr.reduce((s, v) => s + (v - mean) ** 2, 0);
+    const std = Math.sqrt(varSum / (arr.length - 1 || 1)) || 1;
+    return { mean, std };
+  };
+
+  const performAnomalyDetection = (data, equipmentProfiles) => {
+    const detectedAnomalies = [];
+
+    // Tune these
+    const WARN_Z = 2.5; // lower -> more anomalies
+    const CRIT_Z = 3.2;
+
+    equipmentProfiles.forEach((eq) => {
+      const eqDataAll = data.filter((d) => d.equipmentId === eq.id);
+      if (eqDataAll.length < 10) return;
+
+      // Baseline: first 70% of points, Recent: last 24 points
+      const baseline = eqDataAll.slice(0, Math.floor(eqDataAll.length * 0.7));
+      const recent = eqDataAll.slice(-24);
+
+      const temps = baseline.map((r) => Number(r.temperature));
+      const vibs = baseline.map((r) => Number(r.vibration));
+      const press = baseline.map((r) => Number(r.pressure));
+
+      const tStats = computeStats(temps);
+      const vStats = computeStats(vibs);
+      const pStats = computeStats(press);
+
+      recent.forEach((reading) => {
+        const t = Number(reading.temperature);
+        const v = Number(reading.vibration);
+        const p = Number(reading.pressure);
+
+        const zT = Math.abs(zscore(t, tStats.mean, tStats.std));
+        const zV = Math.abs(zscore(v, vStats.mean, vStats.std));
+        const zP = Math.abs(zscore(p, pStats.mean, pStats.std));
+
+        const maxZ = Math.max(zT, zV, zP);
+        const issues = [];
+
+        if (zT >= WARN_Z) issues.push(`Temperature abnormal (z=${zT.toFixed(2)})`);
+        if (zV >= WARN_Z) issues.push(`Vibration abnormal (z=${zV.toFixed(2)})`);
+        if (zP >= WARN_Z) issues.push(`Pressure abnormal (z=${zP.toFixed(2)})`);
+
+        if (issues.length === 0) return;
+
+        const severity = maxZ >= CRIT_Z ? "critical" : "warning";
+        const anomalyScore = Math.min(1, maxZ / 4);
+
+        detectedAnomalies.push({
+          equipmentId: eq.id,
+          equipmentName: eq.name,
+          timestamp: reading.timestamp,
+          anomalyScore,
+          severity,
+          issues,
+          explanation: `Detected unusual behavior vs baseline: ${issues.join(", ")}`,
+        });
+      });
+    });
+
+    const last20 = detectedAnomalies.slice(-20);
+    setAnomalies(last20);
+    generateAlerts(detectedAnomalies);
+  };
+
+  // ----------------------------
+  // Predictions (simple heuristic client-side)
+  // ----------------------------
   const generatePredictions = (data, equipmentProfiles) => {
-    const results = [];
+    const predictionResults = [];
 
     equipmentProfiles.forEach((eq) => {
       const eqData = data.filter((d) => d.equipmentId === eq.id).slice(-48);
 
-      const tempTrend = calculateTrend(eqData.map((d) => d.temperature));
-      const vibTrend = calculateTrend(eqData.map((d) => d.vibration));
-      const presTrend = calculateTrend(eqData.map((d) => d.pressure));
+      const tempTrend = calculateTrend(eqData.map((d) => Number(d.temperature)));
+      const vibTrend = calculateTrend(eqData.map((d) => Number(d.vibration)));
+      const presTrend = calculateTrend(eqData.map((d) => Number(d.pressure)));
 
       let daysToFailure = 90;
       let confidence = 0.7;
@@ -188,7 +252,7 @@ const PredictiveMaintenanceSystem = () => {
         riskLevel = "low";
       }
 
-      results.push({
+      predictionResults.push({
         equipmentId: eq.id,
         equipmentName: eq.name,
         daysToFailure: Math.round(daysToFailure),
@@ -201,9 +265,12 @@ const PredictiveMaintenanceSystem = () => {
             ? "Plan maintenance within 2 weeks"
             : "Continue monitoring",
         trends: {
-          temperature: tempTrend > 0.1 ? "increasing" : tempTrend < -0.1 ? "decreasing" : "stable",
-          vibration: vibTrend > 0.05 ? "increasing" : vibTrend < -0.05 ? "decreasing" : "stable",
-          pressure: presTrend > 0.2 ? "increasing" : presTrend < -0.2 ? "decreasing" : "stable",
+          temperature:
+            tempTrend > 0.1 ? "increasing" : tempTrend < -0.1 ? "decreasing" : "stable",
+          vibration:
+            vibTrend > 0.05 ? "increasing" : vibTrend < -0.05 ? "decreasing" : "stable",
+          pressure:
+            presTrend > 0.2 ? "increasing" : presTrend < -0.2 ? "decreasing" : "stable",
         },
         estimatedCost:
           riskLevel === "critical"
@@ -214,32 +281,14 @@ const PredictiveMaintenanceSystem = () => {
       });
     });
 
-    setPredictions(results);
+    setPredictions(predictionResults);
   };
 
-  const generateAlerts = (detectedAnomalies) => {
-    const newAlerts = detectedAnomalies
-      .filter((a) => a.severity === "critical" || a.severity === "warning")
-      .slice(-10)
-      .map((a, idx) => ({
-        id: `alert-${Date.now()}-${idx}`,
-        timestamp: a.timestamp,
-        equipmentName: a.equipmentName,
-        severity: a.severity,
-        message: a.explanation,
-        acknowledged: false,
-      }));
-
-    setAlerts((prev) => [...newAlerts, ...prev].slice(0, 20));
-  };
-
-  const acknowledgeAlert = (alertId) => {
-    setAlerts((prev) => prev.map((a) => (a.id === alertId ? { ...a, acknowledged: true } : a)));
-  };
-
+  // ----------------------------
+  // Export data
+  // ----------------------------
   const exportData = (type) => {
-    let data;
-    let filename;
+    let data, filename;
 
     switch (type) {
       case "sensor":
@@ -258,7 +307,9 @@ const PredictiveMaintenanceSystem = () => {
         return;
     }
 
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -266,80 +317,103 @@ const PredictiveMaintenanceSystem = () => {
     a.click();
   };
 
+  // Chart data per equipment
   const getChartData = (equipmentId) => {
     return sensorData
       .filter((d) => d.equipmentId === equipmentId)
       .slice(-24)
       .map((d) => ({
         time: new Date(d.timestamp).toLocaleTimeString(),
-        temperature: Number(d.temperature.toFixed(1)),
-        vibration: Number(d.vibration.toFixed(2)),
-        pressure: Number(d.pressure.toFixed(1)),
+        temperature: Number(d.temperature).toFixed(1),
+        vibration: Number(d.vibration).toFixed(2),
+        pressure: Number(d.pressure).toFixed(1),
       }));
   };
 
+  // ----------------------------
+  // On mount
+  // ----------------------------
   useEffect(() => {
-    fetchUser();
-    generateSyntheticData();
+    fetchMe();
+    fetchSyntheticData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // KPI
+  const activeAlertsCount = useMemo(
+    () => alerts.filter((a) => !a.acknowledged).length,
+    [alerts]
+  );
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <div className="flex items-center justify-between gap-6">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">SME Predictive Maintenance System</h1>
-              <p className="text-gray-600 mt-2">AI-powered equipment monitoring and failure prediction</p>
-              {user && (
-                <p className="text-sm text-gray-700 mt-2">
-                  Logged in as <strong>{user.username}</strong>
-                </p>
-              )}
+              <h1 className="text-3xl font-bold text-gray-900">
+                SME Predictive Maintenance System
+              </h1>
+              <p className="text-gray-600 mt-2">
+                AI-powered equipment monitoring and failure prediction
+              </p>
+
+              <div className="mt-2 flex items-center gap-3">
+                {me?.username ? (
+                  <p className="text-sm text-gray-700">
+                    Logged in as <span className="font-semibold">{me.username}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-gray-500">Logged in</p>
+                )}
+
+                <button
+                  onClick={onLogout}
+                  className="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded border hover:bg-gray-50"
+                  title="Logout"
+                >
+                  <LogOut size={16} />
+                  Logout
+                </button>
+              </div>
+
+              {loadErr && <p className="mt-2 text-sm text-red-600">{loadErr}</p>}
             </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={generateSyntheticData}
-                disabled={isProcessing}
-                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
-              >
-                <Activity size={20} />
-                {isProcessing ? "Processing..." : "Refresh Data"}
-              </button>
-
-              <button
-                onClick={logout}
-                className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700"
-              >
-                Logout
-              </button>
-            </div>
+            <button
+              onClick={fetchSyntheticData}
+              disabled={isProcessing}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
+            >
+              <Activity size={20} />
+              {isProcessing ? "Loading..." : "Refresh Data"}
+            </button>
           </div>
         </div>
 
         {/* Navigation Tabs */}
         <div className="bg-white rounded-lg shadow-md mb-6">
           <div className="flex border-b">
-            {["dashboard", "equipment", "anomalies", "predictions", "alerts", "settings"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-6 py-3 font-medium capitalize ${
-                  activeTab === tab
-                    ? "border-b-2 border-blue-600 text-blue-600"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+            {["dashboard", "equipment", "anomalies", "predictions", "alerts", "settings"].map(
+              (tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-6 py-3 font-medium capitalize ${
+                    activeTab === tab
+                      ? "border-b-2 border-blue-600 text-blue-600"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {tab}
+                </button>
+              )
+            )}
           </div>
         </div>
 
-        {/* Dashboard */}
+        {/* Dashboard Tab */}
         {activeTab === "dashboard" && (
           <div className="space-y-6">
             {/* KPI Cards */}
@@ -358,9 +432,7 @@ const PredictiveMaintenanceSystem = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-gray-600 text-sm">Active Alerts</p>
-                    <p className="text-3xl font-bold text-red-600">
-                      {alerts.filter((a) => !a.acknowledged).length}
-                    </p>
+                    <p className="text-3xl font-bold text-red-600">{activeAlertsCount}</p>
                   </div>
                   <AlertTriangle className="text-red-600" size={32} />
                 </div>
@@ -391,37 +463,48 @@ const PredictiveMaintenanceSystem = () => {
 
             {/* Equipment Status Overview */}
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">Equipment Health Status</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {equipment.map((eq) => {
-                  const pred = predictions.find((p) => p.equipmentId === eq.id);
-                  return (
-                    <div key={eq.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="font-semibold text-gray-900">{eq.name}</h3>
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            pred?.riskLevel === "critical"
-                              ? "bg-red-100 text-red-800"
-                              : pred?.riskLevel === "medium"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-green-100 text-green-800"
-                          }`}
-                        >
-                          {pred?.riskLevel || "good"}
-                        </span>
+              <h2 className="text-xl font-bold text-gray-900 mb-4">
+                Equipment Health Status
+              </h2>
+
+              {equipment.length === 0 ? (
+                <p className="text-gray-600">No equipment loaded yet.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {equipment.map((eq) => {
+                    const pred = predictions.find((p) => p.equipmentId === eq.id);
+                    return (
+                      <div key={eq.id} className="border rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="font-semibold text-gray-900">{eq.name}</h3>
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-medium ${
+                              pred?.riskLevel === "critical"
+                                ? "bg-red-100 text-red-800"
+                                : pred?.riskLevel === "medium"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-green-100 text-green-800"
+                            }`}
+                          >
+                            {pred?.riskLevel || eq.health || "good"}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-2">ID: {eq.id}</p>
+                        {pred && (
+                          <p className="text-sm text-gray-700">
+                            Est. failure: {pred.daysToFailure} days
+                          </p>
+                        )}
                       </div>
-                      <p className="text-sm text-gray-600 mb-2">ID: {eq.id}</p>
-                      {pred && <p className="text-sm text-gray-700">Est. failure: {pred.daysToFailure} days</p>}
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* Equipment */}
+        {/* Equipment Tab */}
         {activeTab === "equipment" && (
           <div className="space-y-6">
             {equipment.map((eq) => {
@@ -439,9 +522,24 @@ const PredictiveMaintenanceSystem = () => {
                       <YAxis />
                       <Tooltip />
                       <Legend />
-                      <Line type="monotone" dataKey="temperature" stroke="#ef4444" name="Temperature (°C)" />
-                      <Line type="monotone" dataKey="vibration" stroke="#3b82f6" name="Vibration (mm/s)" />
-                      <Line type="monotone" dataKey="pressure" stroke="#10b981" name="Pressure (PSI)" />
+                      <Line
+                        type="monotone"
+                        dataKey="temperature"
+                        stroke="#ef4444"
+                        name="Temperature"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="vibration"
+                        stroke="#3b82f6"
+                        name="Vibration"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="pressure"
+                        stroke="#10b981"
+                        name="Pressure"
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -450,7 +548,7 @@ const PredictiveMaintenanceSystem = () => {
           </div>
         )}
 
-        {/* Anomalies */}
+        {/* Anomalies Tab */}
         {activeTab === "anomalies" && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <div className="flex justify-between items-center mb-4">
@@ -465,42 +563,53 @@ const PredictiveMaintenanceSystem = () => {
             </div>
 
             <div className="space-y-4">
-              {anomalies.map((anomaly, idx) => (
-                <div key={idx} className="border rounded-lg p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            anomaly.severity === "critical"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-yellow-100 text-yellow-800"
-                          }`}
-                        >
-                          {anomaly.severity.toUpperCase()}
-                        </span>
-                        <span className="font-semibold">{anomaly.equipmentName}</span>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-2">{new Date(anomaly.timestamp).toLocaleString()}</p>
-                      <p className="text-gray-700">{anomaly.explanation}</p>
-                      <div className="mt-2">
-                        <span className="text-sm font-medium">Anomaly Score: </span>
-                        <span className="text-sm">{(anomaly.anomalyScore * 100).toFixed(0)}%</span>
+              {anomalies.length === 0 ? (
+                <p className="text-gray-600">No anomalies detected.</p>
+              ) : (
+                anomalies.map((anomaly, idx) => (
+                  <div key={idx} className="border rounded-lg p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-medium ${
+                              anomaly.severity === "critical"
+                                ? "bg-red-100 text-red-800"
+                                : anomaly.severity === "warning"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-blue-100 text-blue-800"
+                            }`}
+                          >
+                            {anomaly.severity.toUpperCase()}
+                          </span>
+                          <span className="font-semibold">{anomaly.equipmentName}</span>
+                        </div>
+                        <p className="text-sm text-gray-600 mb-2">
+                          {new Date(anomaly.timestamp).toLocaleString()}
+                        </p>
+                        <p className="text-gray-700">{anomaly.explanation}</p>
+                        <div className="mt-2">
+                          <span className="text-sm font-medium">Anomaly Score: </span>
+                          <span className="text-sm">
+                            {(anomaly.anomalyScore * 100).toFixed(0)}%
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              {anomalies.length === 0 && <p className="text-gray-600">No anomalies detected.</p>}
+                ))
+              )}
             </div>
           </div>
         )}
 
-        {/* Predictions */}
+        {/* Predictions Tab */}
         {activeTab === "predictions" && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Failure Predictions & Recommendations</h2>
+              <h2 className="text-xl font-bold text-gray-900">
+                Failure Predictions & Recommendations
+              </h2>
               <button
                 onClick={() => exportData("predictions")}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -518,7 +627,9 @@ const PredictiveMaintenanceSystem = () => {
                   <div key={idx} className="border rounded-lg p-6">
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-gray-900">{pred.equipmentName}</h3>
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          {pred.equipmentName}
+                        </h3>
                         <p className="text-sm text-gray-600">{pred.equipmentId}</p>
                       </div>
                       <span
@@ -537,19 +648,67 @@ const PredictiveMaintenanceSystem = () => {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                       <div>
                         <p className="text-sm text-gray-600">Est. Time to Failure</p>
-                        <p className="text-2xl font-bold text-gray-900">{pred.daysToFailure} days</p>
+                        <p className="text-2xl font-bold text-gray-900">
+                          {pred.daysToFailure} days
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-600">Confidence</p>
-                        <p className="text-2xl font-bold text-gray-900">{(pred.confidence * 100).toFixed(0)}%</p>
+                        <p className="text-2xl font-bold text-gray-900">
+                          {(pred.confidence * 100).toFixed(0)}%
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-600">Est. Maintenance Cost</p>
-                        <p className="text-2xl font-bold text-gray-900">${pred.estimatedCost.toFixed(0)}</p>
+                        <p className="text-2xl font-bold text-gray-900">
+                          ${pred.estimatedCost.toFixed(0)}
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-600">Potential Savings</p>
                         <p className="text-2xl font-bold text-green-600">30%</p>
+                      </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sensor Trends:</p>
+                      <div className="flex gap-4">
+                        <span className="text-sm">
+                          Temp:{" "}
+                          <span
+                            className={
+                              pred.trends.temperature === "increasing"
+                                ? "text-red-600"
+                                : "text-green-600"
+                            }
+                          >
+                            {pred.trends.temperature}
+                          </span>
+                        </span>
+                        <span className="text-sm">
+                          Vibration:{" "}
+                          <span
+                            className={
+                              pred.trends.vibration === "increasing"
+                                ? "text-red-600"
+                                : "text-green-600"
+                            }
+                          >
+                            {pred.trends.vibration}
+                          </span>
+                        </span>
+                        <span className="text-sm">
+                          Pressure:{" "}
+                          <span
+                            className={
+                              pred.trends.pressure === "increasing"
+                                ? "text-red-600"
+                                : "text-green-600"
+                            }
+                          >
+                            {pred.trends.pressure}
+                          </span>
+                        </span>
                       </div>
                     </div>
 
@@ -564,13 +723,11 @@ const PredictiveMaintenanceSystem = () => {
                     </div>
                   </div>
                 ))}
-
-              {predictions.length === 0 && <p className="text-gray-600">No predictions available.</p>}
             </div>
           </div>
         )}
 
-        {/* Alerts */}
+        {/* Alerts Tab */}
         {activeTab === "alerts" && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Active Alerts</h2>
@@ -585,24 +742,33 @@ const PredictiveMaintenanceSystem = () => {
                 alerts.map((alert) => (
                   <div
                     key={alert.id}
-                    className={`border rounded-lg p-4 ${alert.acknowledged ? "bg-gray-50 opacity-60" : ""}`}
+                    className={`border rounded-lg p-4 ${
+                      alert.acknowledged ? "bg-gray-50 opacity-60" : ""
+                    }`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-2">
                           <span
                             className={`px-2 py-1 rounded text-xs font-medium ${
-                              alert.severity === "critical" ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"
+                              alert.severity === "critical"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-yellow-100 text-yellow-800"
                             }`}
                           >
                             {alert.severity.toUpperCase()}
                           </span>
                           <span className="font-semibold">{alert.equipmentName}</span>
                           {alert.acknowledged && (
-                            <span className="text-xs text-green-600 font-medium">✓ Acknowledged</span>
+                            <span className="text-xs text-green-600 font-medium">
+                              ✓ Acknowledged
+                            </span>
                           )}
                         </div>
-                        <p className="text-sm text-gray-600 mb-2">{new Date(alert.timestamp).toLocaleString()}</p>
+
+                        <p className="text-sm text-gray-600 mb-2">
+                          {new Date(alert.timestamp).toLocaleString()}
+                        </p>
                         <p className="text-gray-700">{alert.message}</p>
                       </div>
 
@@ -622,10 +788,15 @@ const PredictiveMaintenanceSystem = () => {
           </div>
         )}
 
-        {/* Settings */}
+        {/* Settings Tab (kept UI) */}
         {activeTab === "settings" && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-6">Threshold Configuration</h2>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Note: thresholds are currently only UI placeholders. Anomaly detection now uses
+              per-machine z-score baselines.
+            </p>
 
             <div className="space-y-6">
               {Object.entries(thresholds).map(([sensor, values]) => (
@@ -634,14 +805,19 @@ const PredictiveMaintenanceSystem = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Warning Threshold</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Warning Threshold
+                      </label>
                       <input
                         type="number"
                         value={values.warning}
                         onChange={(e) =>
                           setThresholds((prev) => ({
                             ...prev,
-                            [sensor]: { ...prev[sensor], warning: parseFloat(e.target.value) },
+                            [sensor]: {
+                              ...prev[sensor],
+                              warning: parseFloat(e.target.value),
+                            },
                           }))
                         }
                         className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
@@ -649,14 +825,19 @@ const PredictiveMaintenanceSystem = () => {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Critical Threshold</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Critical Threshold
+                      </label>
                       <input
                         type="number"
                         value={values.critical}
                         onChange={(e) =>
                           setThresholds((prev) => ({
                             ...prev,
-                            [sensor]: { ...prev[sensor], critical: parseFloat(e.target.value) },
+                            [sensor]: {
+                              ...prev[sensor],
+                              critical: parseFloat(e.target.value),
+                            },
                           }))
                         }
                         className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
@@ -668,9 +849,13 @@ const PredictiveMaintenanceSystem = () => {
             </div>
 
             <div className="mt-6 flex gap-3">
-              <button onClick={generateSyntheticData} className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+              <button
+                onClick={fetchSyntheticData}
+                className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
                 Apply & Reanalyze
               </button>
+
               <button
                 onClick={() => exportData("sensor")}
                 className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center gap-2"
