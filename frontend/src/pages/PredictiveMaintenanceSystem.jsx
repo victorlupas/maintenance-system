@@ -972,5 +972,4 @@ const PredictiveMaintenanceSystem = () => {
     </div>
   );
 };
-
 export default PredictiveMaintenanceSystem;
