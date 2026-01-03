@@ -1,5 +1,3 @@
-// frontend/src/pages/PredictiveMaintenanceSystem.jsx
-
 import React, { useEffect, useMemo, useState } from "react";
 import {
   LineChart,
@@ -41,6 +39,9 @@ const PredictiveMaintenanceSystem = () => {
   // Auth UI
   const [me, setMe] = useState(null);
   const navigate = useNavigate();
+
+  // ML predictions from backend (per equipmentId)
+  const [mlPredictions, setMlPredictions] = useState({});
 
   // thresholds kept for Settings UI (not used by anomaly detection anymore)
   const [thresholds, setThresholds] = useState({
@@ -100,6 +101,51 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
+  // NEW: Backend ML prediction fetch (Air Compressor)
+  // ----------------------------
+  const fetchAirCompressorPrediction = async () => {
+    try {
+      const res = await api.get("/api/predictions/air-compressor/");
+      setMlPredictions((prev) => ({
+        ...prev,
+        [res.data.equipmentId]: res.data,
+      }));
+    } catch (e) {
+      console.error("Failed to load air compressor ML prediction", e);
+    }
+  };
+
+  // ----------------------------
+  // NEW: Backend ML prediction fetch (Milling)
+  // ----------------------------
+  const fetchMillingPrediction = async () => {
+  try {
+    const res = await api.get("/api/predictions/milling/");
+    setMlPredictions((prev) => ({
+      ...prev,
+      [res.data.equipmentId]: res.data,
+    }));
+  } catch (e) {
+    console.error("Failed to load milling ML prediction", e);
+  }
+};
+  // ----------------------------
+  // NEW: Backend ML prediction fetch (Turbofan)
+  // ----------------------------
+  const fetchTurbofanPrediction = async () => {
+  try {
+    const res = await api.get("/api/predictions/turbofan/");
+    setMlPredictions((prev) => ({
+      ...prev,
+      [res.data.equipmentId]: res.data,
+    }));
+  } catch (e) {
+    console.error("Failed to load turbofan ML prediction", e);
+  }
+};
+
+
+  // ----------------------------
   // Helpers
   // ----------------------------
   const calculateTrend = (values) => {
@@ -138,7 +184,7 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // NEW: Z-score anomaly detection (per equipment baseline)
+  // Z-score anomaly detection (per equipment baseline)
   // ----------------------------
   const zscore = (x, mean, std) => {
     if (
@@ -222,12 +268,79 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
+  // ML → Prediction mapping (simple & consistent)
+  // ----------------------------
+  const mlToPrediction = (ml) => {
+    const { probFailure, riskLevel } = ml;
+
+    let daysToFailure;
+    let estimatedCost;
+    let potentialSavings;
+
+    if (riskLevel === "critical") {
+      daysToFailure = Math.round(5 + (1 - probFailure) * 15);
+      estimatedCost = 6000;
+      potentialSavings = 45;
+    } else if (riskLevel === "medium") {
+      daysToFailure = Math.round(20 + (1 - probFailure) * 30);
+      estimatedCost = 2500;
+      potentialSavings = 30;
+    } else {
+      daysToFailure = Math.round(45 + (1 - probFailure) * 45);
+      estimatedCost = 800;
+      potentialSavings = 15;
+    }
+
+    return {
+      daysToFailure,
+      estimatedCost,
+      potentialSavings,
+    };
+  };
+
+  // ----------------------------
   // Predictions (simple heuristic client-side)
   // ----------------------------
   const generatePredictions = (data, equipmentProfiles) => {
     const predictionResults = [];
 
     equipmentProfiles.forEach((eq) => {
+      const ml = mlPredictions[eq.id];
+
+      // ---------------------------------
+      // ML-DRIVEN (Air Compressor + Milling)
+      // ---------------------------------
+      if (ml) {
+        const derived = mlToPrediction(ml);
+
+        predictionResults.push({
+          equipmentId: eq.id,
+          equipmentName: eq.name,
+
+          daysToFailure: derived.daysToFailure,
+          confidence: ml.confidence,
+          riskLevel: ml.riskLevel,
+
+          estimatedCost: derived.estimatedCost,
+          potentialSavings: derived.potentialSavings,
+
+          recommendedAction:
+            ml.riskLevel === "critical"
+              ? "Schedule immediate maintenance"
+              : ml.riskLevel === "medium"
+              ? "Plan maintenance within 2 weeks"
+              : "Continue monitoring",
+
+          trends: {
+            temperature: "stable",
+            vibration: "stable",
+            pressure: "stable",
+          },
+        });
+
+        return;
+      }
+
       const eqData = data.filter((d) => d.equipmentId === eq.id).slice(-48);
 
       const tempTrend = calculateTrend(eqData.map((d) => Number(d.temperature)));
@@ -266,11 +379,23 @@ const PredictiveMaintenanceSystem = () => {
             : "Continue monitoring",
         trends: {
           temperature:
-            tempTrend > 0.1 ? "increasing" : tempTrend < -0.1 ? "decreasing" : "stable",
+            tempTrend > 0.1
+              ? "increasing"
+              : tempTrend < -0.1
+              ? "decreasing"
+              : "stable",
           vibration:
-            vibTrend > 0.05 ? "increasing" : vibTrend < -0.05 ? "decreasing" : "stable",
+            vibTrend > 0.05
+              ? "increasing"
+              : vibTrend < -0.05
+              ? "decreasing"
+              : "stable",
           pressure:
-            presTrend > 0.2 ? "increasing" : presTrend < -0.2 ? "decreasing" : "stable",
+            presTrend > 0.2
+              ? "increasing"
+              : presTrend < -0.2
+              ? "decreasing"
+              : "stable",
         },
         estimatedCost:
           riskLevel === "critical"
@@ -336,6 +461,9 @@ const PredictiveMaintenanceSystem = () => {
   useEffect(() => {
     fetchMe();
     fetchSyntheticData();
+    fetchAirCompressorPrediction();
+    fetchMillingPrediction();
+    fetchTurbofanPrediction();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -382,7 +510,12 @@ const PredictiveMaintenanceSystem = () => {
             </div>
 
             <button
-              onClick={fetchSyntheticData}
+              onClick={() => {
+                fetchSyntheticData();
+                fetchAirCompressorPrediction();
+                fetchMillingPrediction();
+                fetchTurbofanPrediction();
+              }}
               disabled={isProcessing}
               className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
             >
@@ -395,21 +528,26 @@ const PredictiveMaintenanceSystem = () => {
         {/* Navigation Tabs */}
         <div className="bg-white rounded-lg shadow-md mb-6">
           <div className="flex border-b">
-            {["dashboard", "equipment", "anomalies", "predictions", "alerts", "settings"].map(
-              (tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-6 py-3 font-medium capitalize ${
-                    activeTab === tab
-                      ? "border-b-2 border-blue-600 text-blue-600"
-                      : "text-gray-600 hover:text-gray-900"
-                  }`}
-                >
-                  {tab}
-                </button>
-              )
-            )}
+            {[
+              "dashboard",
+              "equipment",
+              "anomalies",
+              "predictions",
+              "alerts",
+              "settings",
+            ].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-6 py-3 font-medium capitalize ${
+                  activeTab === tab
+                    ? "border-b-2 border-blue-600 text-blue-600"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -473,6 +611,8 @@ const PredictiveMaintenanceSystem = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {equipment.map((eq) => {
                     const pred = predictions.find((p) => p.equipmentId === eq.id);
+                    const ml = mlPredictions[eq.id];
+
                     return (
                       <div key={eq.id} className="border rounded-lg p-4">
                         <div className="flex items-center justify-between mb-2">
@@ -489,7 +629,24 @@ const PredictiveMaintenanceSystem = () => {
                             {pred?.riskLevel || eq.health || "good"}
                           </span>
                         </div>
+
                         <p className="text-sm text-gray-600 mb-2">ID: {eq.id}</p>
+
+                        {ml && (
+                          <p className="text-sm text-gray-700 mb-2">
+                            Failure probability:{" "}
+                            <span className="font-semibold">
+                              {(ml.probFailure * 100).toFixed(1)}%
+                            </span>{" "}
+                            · Risk:{" "}
+                            <span className="font-semibold">{ml.riskLevel}</span> ·
+                            Confidence:{" "}
+                            <span className="font-semibold">
+                              {(ml.confidence * 100).toFixed(0)}%
+                            </span>
+                          </p>
+                        )}
+
                         {pred && (
                           <p className="text-sm text-gray-700">
                             Est. failure: {pred.daysToFailure} days
@@ -666,12 +823,16 @@ const PredictiveMaintenanceSystem = () => {
                       </div>
                       <div>
                         <p className="text-sm text-gray-600">Potential Savings</p>
-                        <p className="text-2xl font-bold text-green-600">30%</p>
+                        <p className="text-2xl font-bold text-green-600">
+                          {pred.potentialSavings}%
+                        </p>
                       </div>
                     </div>
 
                     <div className="mb-4">
-                      <p className="text-sm font-medium text-gray-700 mb-2">Sensor Trends:</p>
+                      <p className="text-sm font-medium text-gray-700 mb-2">
+                        Sensor Trends:
+                      </p>
                       <div className="flex gap-4">
                         <span className="text-sm">
                           Temp:{" "}
@@ -716,7 +877,9 @@ const PredictiveMaintenanceSystem = () => {
                       <div className="flex items-start gap-2">
                         <Calendar className="text-blue-600 mt-1" size={20} />
                         <div>
-                          <p className="font-medium text-blue-900">Recommended Action:</p>
+                          <p className="font-medium text-blue-900">
+                            Recommended Action:
+                          </p>
                           <p className="text-blue-800">{pred.recommendedAction}</p>
                         </div>
                       </div>
@@ -850,7 +1013,11 @@ const PredictiveMaintenanceSystem = () => {
 
             <div className="mt-6 flex gap-3">
               <button
-                onClick={fetchSyntheticData}
+                onClick={() => {
+                  fetchSyntheticData();
+                  fetchAirCompressorPrediction();
+                  fetchMillingPrediction();
+                }}
                 className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >
                 Apply & Reanalyze

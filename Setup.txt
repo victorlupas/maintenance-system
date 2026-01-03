@@ -13,3 +13,29 @@ npm install axios react-router-dom(daca nu e instalat) Axios face legatura intre
 npm run dev (pentru a da start la site)
 
 cont pentru site username: admin password: admin
+------------------------------------------------------------------------------------------
+
+pentru data generation trebuie avute urmatoarele fisiere in folderul data din backend
+
+air_compressor.csv
+ai4i2020.csv
+train_FD001.txt
+
+dupa ce descarcati dataseturile si le dezarhivazti aveti urmatoarele
+
+in ala de air compressor gasesti data.csv, ala il redenumesti la air_compressor.csv
+in ala de milling gasesti ai4i2020.csv, nu trebuie redenumit
+in ala de turbofan engine de la NASA gasesti train_FD001.txt, nu trebuie redenumit
+
+linkurile pentru dataseturi
+milling: https://www.kaggle.com/datasets/stephanmatzka/predictive-maintenance-dataset-ai4i-2020
+air compressor: https://www.kaggle.com/datasets/afumetto/predictive-maintenance-dataset-air-compressor
+turbofan jet engine: https://www.kaggle.com/datasets/behrad3d/nasa-cmaps
+
+.\.venv\Scripts\Activate - daca cumva nu e activat .venv folositi comanda asta in main directory
+
+python -m ml.turbofan_analysis
+python -m ml.milling_analysis
+python -m ml.air_compressor_analysis
+
+daca nu aveti fisierele .joblib folositi aceste comenzi pentru a antrena ML-urile
