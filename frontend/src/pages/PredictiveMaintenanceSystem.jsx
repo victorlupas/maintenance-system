@@ -1,3 +1,5 @@
+// frontend/src/pages/PredictiveMaintenanceSystem.jsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   LineChart,
@@ -17,6 +19,9 @@ import {
   Calendar,
   Download,
   LogOut,
+  Plus,      // From Script 1
+  X,         // From Script 1
+  Trash2,    // From Script 1
 } from "lucide-react";
 import { api } from "../apiClient";
 import { useNavigate } from "react-router-dom";
@@ -36,14 +41,23 @@ const PredictiveMaintenanceSystem = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [loadErr, setLoadErr] = useState("");
 
+  // --- STATE FROM SCRIPT 1 (ADD MACHINE MODAL) ---
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [machineTypes, setMachineTypes] = useState([]);
+  const [newMachineName, setNewMachineName] = useState("");
+  const [selectedTypeId, setSelectedTypeId] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+  // ----------------------------------------------
+
+  // --- STATE FROM SCRIPT 2 (ML PREDICTIONS) ---
+  const [mlPredictions, setMlPredictions] = useState({});
+  // --------------------------------------------
+
   // Auth UI
   const [me, setMe] = useState(null);
   const navigate = useNavigate();
 
-  // ML predictions from backend (per equipmentId)
-  const [mlPredictions, setMlPredictions] = useState({});
-
-  // thresholds kept for Settings UI (not used by anomaly detection anymore)
+  // thresholds kept for Settings UI
   const [thresholds, setThresholds] = useState({
     temperature: { warning: 75, critical: 85 },
     vibration: { warning: 3.5, critical: 4.5 },
@@ -69,7 +83,7 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // Backend data fetch
+  // Backend data fetch (Merged Logic)
   // ----------------------------
   const fetchSyntheticData = async () => {
     setIsProcessing(true);
@@ -88,7 +102,7 @@ const PredictiveMaintenanceSystem = () => {
     } catch (e) {
       console.error(e);
       setLoadErr(
-        "Failed to load data from backend. Make sure you're logged in and the Django server is running."
+        "Failed to load data. Make sure you are logged in and backend is running."
       );
       setEquipment([]);
       setSensorData([]);
@@ -101,7 +115,7 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // NEW: Backend ML prediction fetch (Air Compressor)
+  // ML Prediction Fetchers (From Script 2)
   // ----------------------------
   const fetchAirCompressorPrediction = async () => {
     try {
@@ -115,35 +129,97 @@ const PredictiveMaintenanceSystem = () => {
     }
   };
 
-  // ----------------------------
-  // NEW: Backend ML prediction fetch (Milling)
-  // ----------------------------
   const fetchMillingPrediction = async () => {
-  try {
-    const res = await api.get("/api/predictions/milling/");
-    setMlPredictions((prev) => ({
-      ...prev,
-      [res.data.equipmentId]: res.data,
-    }));
-  } catch (e) {
-    console.error("Failed to load milling ML prediction", e);
-  }
-};
-  // ----------------------------
-  // NEW: Backend ML prediction fetch (Turbofan)
-  // ----------------------------
-  const fetchTurbofanPrediction = async () => {
-  try {
-    const res = await api.get("/api/predictions/turbofan/");
-    setMlPredictions((prev) => ({
-      ...prev,
-      [res.data.equipmentId]: res.data,
-    }));
-  } catch (e) {
-    console.error("Failed to load turbofan ML prediction", e);
-  }
-};
+    try {
+      const res = await api.get("/api/predictions/milling/");
+      setMlPredictions((prev) => ({
+        ...prev,
+        [res.data.equipmentId]: res.data,
+      }));
+    } catch (e) {
+      console.error("Failed to load milling ML prediction", e);
+    }
+  };
 
+  const fetchTurbofanPrediction = async () => {
+    try {
+      const res = await api.get("/api/predictions/turbofan/");
+      setMlPredictions((prev) => ({
+        ...prev,
+        [res.data.equipmentId]: res.data,
+      }));
+    } catch (e) {
+      console.error("Failed to load turbofan ML prediction", e);
+    }
+  };
+
+  // ----------------------------
+  // ADD MACHINE Functions (From Script 1)
+  // ----------------------------
+  const openAddModal = async () => {
+    setIsAddModalOpen(true);
+    // Fetch available types from DB
+    try {
+      const res = await api.get("/api/machine-types/");
+      setMachineTypes(res.data);
+      if (res.data.length > 0) {
+        setSelectedTypeId(res.data[0].id);
+      }
+    } catch (error) {
+      console.error("Failed to fetch machine types", error);
+      alert("Could not load machine types from database.");
+    }
+  };
+
+  const closeAddModal = () => {
+    setIsAddModalOpen(false);
+    setNewMachineName("");
+  };
+
+  const handleAddMachine = async (e) => {
+    e.preventDefault();
+    if (!newMachineName || !selectedTypeId) return;
+
+    setIsAdding(true);
+    try {
+      // 1. Save to DB
+      await api.post("/api/machines/add/", {
+        name: newMachineName,
+        type_id: selectedTypeId,
+      });
+
+      // 2. Refresh the dashboard
+      await fetchSyntheticData();
+      // Try to fetch ML predictions again in case the new machine matches a type
+      fetchAirCompressorPrediction();
+      fetchMillingPrediction();
+      fetchTurbofanPrediction();
+
+      // 3. Close modal
+      closeAddModal();
+    } catch (error) {
+      console.error("Failed to add machine", error);
+      alert("Failed to add machine. Please try again.");
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  // ----------------------------
+  // DELETE MACHINE Function (From Script 1)
+  // ----------------------------
+  const handleDeleteMachine = async (machineId) => {
+    if (!window.confirm("Are you sure you want to remove this machine?")) return;
+
+    try {
+      await api.delete(`/api/machines/${machineId}/delete/`);
+      // Refresh data to update the UI
+      await fetchSyntheticData();
+    } catch (error) {
+      console.error("Failed to delete machine", error);
+      alert("Failed to remove machine.");
+    }
+  };
 
   // ----------------------------
   // Helpers
@@ -184,7 +260,7 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // Z-score anomaly detection (per equipment baseline)
+  // Anomaly Detection
   // ----------------------------
   const zscore = (x, mean, std) => {
     if (
@@ -208,8 +284,6 @@ const PredictiveMaintenanceSystem = () => {
 
   const performAnomalyDetection = (data, equipmentProfiles) => {
     const detectedAnomalies = [];
-
-    // Tune these
     const WARN_Z = 2.5; // lower -> more anomalies
     const CRIT_Z = 3.2;
 
@@ -268,7 +342,7 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // ML → Prediction mapping (simple & consistent)
+  // ML → Prediction mapping (From Script 2)
   // ----------------------------
   const mlToPrediction = (ml) => {
     const { probFailure, riskLevel } = ml;
@@ -299,17 +373,15 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // Predictions (simple heuristic client-side)
+  // Predictions (Hybrid: ML from Script 2 + Heuristic from Script 1)
   // ----------------------------
   const generatePredictions = (data, equipmentProfiles) => {
     const predictionResults = [];
 
     equipmentProfiles.forEach((eq) => {
+      // 1. Check if we have ML predictions (Script 2 Logic)
       const ml = mlPredictions[eq.id];
 
-      // ---------------------------------
-      // ML-DRIVEN (Air Compressor + Milling)
-      // ---------------------------------
       if (ml) {
         const derived = mlToPrediction(ml);
 
@@ -338,9 +410,10 @@ const PredictiveMaintenanceSystem = () => {
           },
         });
 
-        return;
+        return; // Exit this iteration if ML data found
       }
 
+      // 2. Fallback to Heuristic Logic (Script 1 Logic)
       const eqData = data.filter((d) => d.equipmentId === eq.id).slice(-48);
 
       const tempTrend = calculateTrend(eqData.map((d) => Number(d.temperature)));
@@ -410,11 +483,10 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // Export data
+  // Export Data
   // ----------------------------
   const exportData = (type) => {
     let data, filename;
-
     switch (type) {
       case "sensor":
         data = sensorData;
@@ -431,7 +503,6 @@ const PredictiveMaintenanceSystem = () => {
       default:
         return;
     }
-
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
     });
@@ -442,7 +513,6 @@ const PredictiveMaintenanceSystem = () => {
     a.click();
   };
 
-  // Chart data per equipment
   const getChartData = (equipmentId) => {
     return sensorData
       .filter((d) => d.equipmentId === equipmentId)
@@ -456,18 +526,18 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // On mount
+  // On Mount
   // ----------------------------
   useEffect(() => {
     fetchMe();
     fetchSyntheticData();
+    // Fetch ML predictions
     fetchAirCompressorPrediction();
     fetchMillingPrediction();
     fetchTurbofanPrediction();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // KPI
   const activeAlertsCount = useMemo(
     () => alerts.filter((a) => !a.acknowledged).length,
     [alerts]
@@ -495,59 +565,128 @@ const PredictiveMaintenanceSystem = () => {
                 ) : (
                   <p className="text-sm text-gray-500">Logged in</p>
                 )}
-
                 <button
                   onClick={onLogout}
                   className="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded border hover:bg-gray-50"
                   title="Logout"
                 >
-                  <LogOut size={16} />
-                  Logout
+                  <LogOut size={16} /> Logout
                 </button>
               </div>
 
               {loadErr && <p className="mt-2 text-sm text-red-600">{loadErr}</p>}
             </div>
 
-            <button
-              onClick={() => {
-                fetchSyntheticData();
-                fetchAirCompressorPrediction();
-                fetchMillingPrediction();
-                fetchTurbofanPrediction();
-              }}
-              disabled={isProcessing}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
-            >
-              <Activity size={20} />
-              {isProcessing ? "Loading..." : "Refresh Data"}
-            </button>
+            <div className="flex gap-2">
+              {/* Add Machine Button (From Script 1) */}
+              <button
+                onClick={openAddModal}
+                className="bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 flex items-center gap-2"
+                title="Add New Machine"
+              >
+                <Plus size={20} />
+                <span className="hidden md:inline">Add Machine</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  fetchSyntheticData();
+                  fetchAirCompressorPrediction();
+                  fetchMillingPrediction();
+                  fetchTurbofanPrediction();
+                }}
+                disabled={isProcessing}
+                className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
+              >
+                <Activity size={20} />
+                {isProcessing ? "Loading..." : "Refresh Data"}
+              </button>
+            </div>
           </div>
         </div>
 
+        {/* --- MODAL FOR ADDING MACHINE (From Script 1) --- */}
+        {isAddModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200">
+              <button
+                onClick={closeAddModal}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+              >
+                <X size={24} />
+              </button>
+              
+              <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Plus className="text-green-600" /> Add New Equipment
+              </h2>
+              
+              <form onSubmit={handleAddMachine} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Equipment Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Shop Air Compressor 2"
+                    value={newMachineName}
+                    onChange={(e) => setNewMachineName(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Machine Type
+                  </label>
+                  <select
+                    value={selectedTypeId}
+                    onChange={(e) => setSelectedTypeId(e.target.value)}
+                    className="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-500 outline-none bg-white"
+                  >
+                    {machineTypes.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Select the model to simulate appropriate sensor behavior.
+                  </p>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isAdding}
+                    className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-400"
+                  >
+                    {isAdding ? "Adding..." : "Add Machine"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div className="bg-white rounded-lg shadow-md mb-6">
-          <div className="flex border-b">
-            {[
-              "dashboard",
-              "equipment",
-              "anomalies",
-              "predictions",
-              "alerts",
-              "settings",
-            ].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-6 py-3 font-medium capitalize ${
-                  activeTab === tab
-                    ? "border-b-2 border-blue-600 text-blue-600"
-                    : "text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+          <div className="flex border-b overflow-x-auto">
+            {["dashboard", "equipment", "anomalies", "predictions", "alerts", "settings"].map(
+              (tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-6 py-3 font-medium capitalize whitespace-nowrap ${
+                    activeTab === tab
+                      ? "border-b-2 border-blue-600 text-blue-600"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {tab}
+                </button>
+              )
+            )}
           </div>
         </div>
 
@@ -606,7 +745,12 @@ const PredictiveMaintenanceSystem = () => {
               </h2>
 
               {equipment.length === 0 ? (
-                <p className="text-gray-600">No equipment loaded yet.</p>
+                <div className="text-center py-12 text-gray-500">
+                  <p>No equipment loaded yet.</p>
+                  <button onClick={openAddModal} className="text-green-600 font-medium hover:underline mt-2">
+                    Add your first machine
+                  </button>
+                </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {equipment.map((eq) => {
@@ -614,43 +758,58 @@ const PredictiveMaintenanceSystem = () => {
                     const ml = mlPredictions[eq.id];
 
                     return (
-                      <div key={eq.id} className="border rounded-lg p-4">
+                      <div key={eq.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow relative group">
                         <div className="flex items-center justify-between mb-2">
                           <h3 className="font-semibold text-gray-900">{eq.name}</h3>
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              pred?.riskLevel === "critical"
-                                ? "bg-red-100 text-red-800"
-                                : pred?.riskLevel === "medium"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : "bg-green-100 text-green-800"
-                            }`}
-                          >
-                            {pred?.riskLevel || eq.health || "good"}
-                          </span>
+                          
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                pred?.riskLevel === "critical"
+                                  ? "bg-red-100 text-red-800"
+                                  : pred?.riskLevel === "medium"
+                                  ? "bg-yellow-100 text-yellow-800"
+                                  : "bg-green-100 text-green-800"
+                              }`}
+                            >
+                              {pred?.riskLevel?.toUpperCase() || eq.health?.toUpperCase() || "GOOD"}
+                            </span>
+
+                            {/* DELETE BUTTON (From Script 1) */}
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation(); 
+                                handleDeleteMachine(eq.id);
+                              }}
+                              className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                              title="Remove Machine"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </div>
 
-                        <p className="text-sm text-gray-600 mb-2">ID: {eq.id}</p>
+                        <p className="text-xs text-gray-500 mb-2">ID: {eq.id}</p>
+                        <p className="text-xs text-gray-500 mb-2">Type: {eq.type}</p>
 
+                        {/* ML Data Display (From Script 2) */}
                         {ml && (
-                          <p className="text-sm text-gray-700 mb-2">
-                            Failure probability:{" "}
-                            <span className="font-semibold">
-                              {(ml.probFailure * 100).toFixed(1)}%
-                            </span>{" "}
-                            · Risk:{" "}
-                            <span className="font-semibold">{ml.riskLevel}</span> ·
-                            Confidence:{" "}
-                            <span className="font-semibold">
-                              {(ml.confidence * 100).toFixed(0)}%
-                            </span>
-                          </p>
+                          <div className="mt-1 mb-2">
+                             <p className="text-sm text-gray-700">
+                               Failure Prob: <span className="font-semibold">{(ml.probFailure * 100).toFixed(1)}%</span>
+                             </p>
+                             <p className="text-sm text-gray-700">
+                               Confidence: <span className="font-semibold">{(ml.confidence * 100).toFixed(0)}%</span>
+                             </p>
+                          </div>
                         )}
 
                         {pred && (
-                          <p className="text-sm text-gray-700">
-                            Est. failure: {pred.daysToFailure} days
-                          </p>
+                          <div className="mt-3 pt-3 border-t">
+                            <p className="text-sm text-gray-700">
+                              <span className="font-medium">Est. failure:</span> {pred.daysToFailure} days
+                            </p>
+                          </div>
                         )}
                       </div>
                     );
@@ -661,7 +820,7 @@ const PredictiveMaintenanceSystem = () => {
           </div>
         )}
 
-        {/* Equipment Tab */}
+        {/* Equipment Tab (Details) */}
         {activeTab === "equipment" && (
           <div className="space-y-6">
             {equipment.map((eq) => {
@@ -669,7 +828,7 @@ const PredictiveMaintenanceSystem = () => {
               return (
                 <div key={eq.id} className="bg-white rounded-lg shadow-md p-6">
                   <h2 className="text-xl font-bold text-gray-900 mb-4">
-                    {eq.name} ({eq.id})
+                    {eq.name} <span className="text-gray-400 text-sm">({eq.id})</span>
                   </h2>
 
                   <ResponsiveContainer width="100%" height={300}>
@@ -684,18 +843,21 @@ const PredictiveMaintenanceSystem = () => {
                         dataKey="temperature"
                         stroke="#ef4444"
                         name="Temperature"
+                        dot={false}
                       />
                       <Line
                         type="monotone"
                         dataKey="vibration"
                         stroke="#3b82f6"
                         name="Vibration"
+                        dot={false}
                       />
                       <Line
                         type="monotone"
                         dataKey="pressure"
                         stroke="#10b981"
                         name="Pressure"
+                        dot={false}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -951,7 +1113,7 @@ const PredictiveMaintenanceSystem = () => {
           </div>
         )}
 
-        {/* Settings Tab (kept UI) */}
+        {/* Settings Tab */}
         {activeTab === "settings" && (
           <div className="bg-white rounded-lg shadow-md p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-6">Threshold Configuration</h2>
@@ -1017,6 +1179,7 @@ const PredictiveMaintenanceSystem = () => {
                   fetchSyntheticData();
                   fetchAirCompressorPrediction();
                   fetchMillingPrediction();
+                  fetchTurbofanPrediction();
                 }}
                 className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >

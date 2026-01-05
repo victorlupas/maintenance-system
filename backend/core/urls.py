@@ -1,16 +1,18 @@
 from django.contrib import admin
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from api.views import test, me, register, synthetic_data, air_compressor_prediction, milling_predict, turbofan_predict
+from api.views import *
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/test/", test),
     path("api/synthetic/", synthetic_data),
-
+    path("api/machine-types/", get_machine_types), # For the dropdown
+    path("api/machines/add/", add_machine),        # To save user choice
+    path("api/machines/<str:machine_id>/delete/", delete_machine),
     path("api/auth/register/", register),
     path("api/auth/me/", me),
-
+    
     path("api/predictions/air-compressor/", air_compressor_prediction),
     path("api/predictions/milling/", milling_predict),
     path("api/predictions/turbofan/", turbofan_predict),
