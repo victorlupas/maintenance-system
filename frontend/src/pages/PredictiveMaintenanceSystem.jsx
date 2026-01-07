@@ -76,10 +76,19 @@ const PredictiveMaintenanceSystem = () => {
     }
   };
 
-  const onLogout = () => {
+  const onLogout = async () => {
+  try {
+    const refresh = localStorage.getItem("refresh");
+    if (refresh) {
+      await api.post("/api/auth/logout/", { refresh });
+    }
+  } catch (err) {
+    console.error("Logout error:", err);
+  } finally {
     localStorage.removeItem("access");
     localStorage.removeItem("refresh");
     navigate("/login");
+  }
   };
 
   // ----------------------------

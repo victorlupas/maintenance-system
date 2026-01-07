@@ -11,6 +11,7 @@ urlpatterns = [
     path("api/machines/add/", add_machine),        # To save user choice
     path("api/machines/<str:machine_id>/delete/", delete_machine),
     path("api/auth/register/", register),
+    path("api/auth/logout/", logout),
     path("api/auth/me/", me),
     
     path("api/predictions/air-compressor/", air_compressor_prediction),
