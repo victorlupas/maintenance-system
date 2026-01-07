@@ -8,6 +8,10 @@ from rest_framework import status
 from .models import Machine, MachineType, UserMachine
 from django.shortcuts import get_object_or_404
 from .services.synthetic import generate_timeseries
+from django.contrib.auth.password_validation import validate_password
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 # NEW: ML predictor (create this file as discussed)
 # backend/ml/air_compressor_predict.py must exist
@@ -54,8 +58,39 @@ def me(request):
 @permission_classes([AllowAny])
 def register(request):
     username = (request.data.get("username") or "").strip()
-    email = (request.data.get("email") or "").strip()
+    email = (request.data.get("email") or "").strip().lower()
     password = request.data.get("password") or ""
+    dummy_user = User(username=username, email=email)
+
+    try:
+        validate_email(email)
+    except ValidationError:
+        return Response(
+            {"detail": "Invalid email address"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    if User.objects.filter(email=email).exists():
+        return Response(
+            {"detail": "Email already exists"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        validate_password(password)
+    except ValidationError as e:
+        return Response(
+            {"detail": list(e.messages)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+    confirm_password = request.data.get("confirm_password") or ""
+
+    if password != confirm_password:
+        return Response(
+            {"detail": "Passwords do not match"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     if not username or not password:
         return Response(
@@ -70,11 +105,43 @@ def register(request):
         )
 
     user = User.objects.create_user(username=username, email=email, password=password)
+    refresh = RefreshToken.for_user(user)
     return Response(
-        {"id": user.id, "username": user.username, "email": user.email},
+        {
+            "user": {"id": user.id, "username": user.username, "email": user.email},
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        },
         status=status.HTTP_201_CREATED,
     )
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    """
+    Blacklist the refresh token to invalidate it immediately.
+    Frontend should send the refresh token in the request body.
+    """
+    try:
+        refresh_token = request.data.get("refresh")
+        if not refresh_token:
+            return Response(
+                {"detail": "Refresh token is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        token = RefreshToken(refresh_token)
+        token.blacklist()
+        
+        return Response(
+            {"detail": "Logout successful"},
+            status=status.HTTP_205_RESET_CONTENT,
+        )
+    except Exception as e:
+        return Response(
+            {"detail": "Invalid token or already blacklisted"},
+            status=status.HTTP_400_BAD_REQUEST,
+        ) 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
