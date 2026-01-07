@@ -113,7 +113,12 @@ const PredictiveMaintenanceSystem = () => {
       setIsProcessing(false);
     }
   };
-
+  const formatDate = (iso) =>
+  new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
   // ----------------------------
   // ML Prediction Fetchers (From Script 2)
   // ----------------------------
@@ -753,7 +758,9 @@ const PredictiveMaintenanceSystem = () => {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {equipment.map((eq) => {
+                  {[...equipment]
+                    .sort((a, b) => b.id - a.id) // Sorts descending (Highest ID first)
+                    .map((eq) => {
                     const pred = predictions.find((p) => p.equipmentId === eq.id);
                     const ml = mlPredictions[eq.id];
 
@@ -789,8 +796,11 @@ const PredictiveMaintenanceSystem = () => {
                           </div>
                         </div>
 
-                        <p className="text-xs text-gray-500 mb-2">ID: {eq.id}</p>
-                        <p className="text-xs text-gray-500 mb-2">Type: {eq.type}</p>
+                        <p className="text-xs text-gray-500">ID: {eq.id}</p>
+                        <p className="text-xs text-gray-500">Type: {eq.type}</p>
+                        <p className="text-xs text-gray-500">
+                          Added: {eq.dateAdded ? formatDate(eq.dateAdded) : "—"}
+                        </p>
 
                         {/* ML Data Display (From Script 2) */}
                         {ml && (

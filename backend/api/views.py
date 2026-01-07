@@ -18,7 +18,7 @@ from ml.turbofan_predict import predict_turbofan
 
 # Helper function to get the list of the machines
 def machine_list(request):
-    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type')
+    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type').order_by("-id")
     
     if not user_machines.exists():
         # Fallback: if user has no machines, return empty or default
@@ -30,7 +30,8 @@ def machine_list(request):
             "id": um.machine.machine_id,
             "name": um.machine.name,
             "type": um.machine.type.type_id, # This links to the CSV logic
-            "health": "good" # Default health, or you can add a health field to UserMachine later
+            "health": "good", # Default health, or you can add a health field to UserMachine later
+            "dateAdded": um.created_at.isoformat(),
         })
 
     return machine_list
@@ -116,7 +117,7 @@ def synthetic_data(request):
     Generate data ONLY for machines tracking by the current user.
     """
     # 1. Get the user's machines from the DB
-    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type')
+    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type').order_by("-id")
     
     if not user_machines.exists():
         # Fallback: if user has no machines, return empty or default
@@ -130,7 +131,8 @@ def synthetic_data(request):
             "id": um.machine.machine_id,
             "name": um.machine.name,
             "type": um.machine.type.type_id, # This links to the CSV logic
-            "health": "good" # Default health, or you can add a health field to UserMachine later
+            "health": "good", # Default health, or you can add a health field to UserMachine later
+            "dateAdded": um.created_at.isoformat(),
         })
 
     # 3. Call the updated service
