@@ -32,7 +32,7 @@ milling: https://www.kaggle.com/datasets/stephanmatzka/predictive-maintenance-da
 air compressor: https://www.kaggle.com/datasets/afumetto/predictive-maintenance-dataset-air-compressor
 turbofan jet engine: https://www.kaggle.com/datasets/behrad3d/nasa-cmaps
 
-..venv\Scripts\Activate - daca cumva nu e activat .venv folositi comanda asta in main directory
+.\.venv\Scripts\Activate - daca cumva nu e activat .venv folositi comanda asta in main directory
 
 python -m ml.turbofan_analysis
 python -m ml.milling_analysis

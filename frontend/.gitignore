@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ML artifacts
+backend/ml/models/*.joblib
+backend/ml/models/**/*.joblib
