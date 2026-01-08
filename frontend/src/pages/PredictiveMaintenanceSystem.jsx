@@ -1,5 +1,3 @@
-// frontend/src/pages/PredictiveMaintenanceSystem.jsx
-
 import React, { useEffect, useMemo, useState } from "react";
 import {
   LineChart,
@@ -19,9 +17,9 @@ import {
   Calendar,
   Download,
   LogOut,
-  Plus,      // From Script 1
-  X,         // From Script 1
-  Trash2,    // From Script 1
+  Plus,
+  X,
+  Trash2,
 } from "lucide-react";
 import { api } from "../apiClient";
 import { useNavigate } from "react-router-dom";
@@ -41,17 +39,15 @@ const PredictiveMaintenanceSystem = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [loadErr, setLoadErr] = useState("");
 
-  // --- STATE FROM SCRIPT 1 (ADD MACHINE MODAL) ---
+  // Add Machine Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [machineTypes, setMachineTypes] = useState([]);
   const [newMachineName, setNewMachineName] = useState("");
   const [selectedTypeId, setSelectedTypeId] = useState("");
   const [isAdding, setIsAdding] = useState(false);
-  // ----------------------------------------------
 
-  // --- STATE FROM SCRIPT 2 (ML PREDICTIONS) ---
+  // ML predictions from backend (per equipmentId)
   const [mlPredictions, setMlPredictions] = useState({});
-  // --------------------------------------------
 
   // Auth UI
   const [me, setMe] = useState(null);
@@ -77,22 +73,22 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   const onLogout = async () => {
-  try {
-    const refresh = localStorage.getItem("refresh");
-    if (refresh) {
-      await api.post("/api/auth/logout/", { refresh });
+    try {
+      const refresh = localStorage.getItem("refresh");
+      if (refresh) {
+        await api.post("/api/auth/logout/", { refresh });
+      }
+    } catch (err) {
+      console.error("Logout error:", err);
+    } finally {
+      localStorage.removeItem("access");
+      localStorage.removeItem("refresh");
+      navigate("/login");
     }
-  } catch (err) {
-    console.error("Logout error:", err);
-  } finally {
-    localStorage.removeItem("access");
-    localStorage.removeItem("refresh");
-    navigate("/login");
-  }
   };
 
   // ----------------------------
-  // Backend data fetch (Merged Logic)
+  // Backend data fetch
   // ----------------------------
   const fetchSyntheticData = async () => {
     setIsProcessing(true);
@@ -107,7 +103,6 @@ const PredictiveMaintenanceSystem = () => {
 
       // recompute derived outputs client-side
       performAnomalyDetection(rows, eq);
-      generatePredictions(rows, eq);
     } catch (e) {
       console.error(e);
       setLoadErr(
@@ -122,22 +117,31 @@ const PredictiveMaintenanceSystem = () => {
       setIsProcessing(false);
     }
   };
+
   const formatDate = (iso) =>
-  new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+    new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+
   // ----------------------------
-  // ML Prediction Fetchers (From Script 2)
+  // ML Prediction Fetchers
   // ----------------------------
   const fetchAirCompressorPrediction = async () => {
     try {
       const res = await api.get("/api/predictions/air-compressor/");
-      setMlPredictions((prev) => ({
-        ...prev,
-        [res.data.equipmentId]: res.data,
-      }));
+      const list = Array.isArray(res.data) ? res.data : [];
+
+      setMlPredictions((prev) => {
+        const next = { ...prev };
+        list.forEach((item) => {
+          if (item?.equipmentId) {
+            next[item.equipmentId] = item;
+          }
+        });
+        return next;
+      });
     } catch (e) {
       console.error("Failed to load air compressor ML prediction", e);
     }
@@ -146,10 +150,17 @@ const PredictiveMaintenanceSystem = () => {
   const fetchMillingPrediction = async () => {
     try {
       const res = await api.get("/api/predictions/milling/");
-      setMlPredictions((prev) => ({
-        ...prev,
-        [res.data.equipmentId]: res.data,
-      }));
+      const list = Array.isArray(res.data) ? res.data : [];
+
+      setMlPredictions((prev) => {
+        const next = { ...prev };
+        list.forEach((item) => {
+          if (item?.equipmentId) {
+            next[item.equipmentId] = item;
+          }
+        });
+        return next;
+      });
     } catch (e) {
       console.error("Failed to load milling ML prediction", e);
     }
@@ -158,21 +169,27 @@ const PredictiveMaintenanceSystem = () => {
   const fetchTurbofanPrediction = async () => {
     try {
       const res = await api.get("/api/predictions/turbofan/");
-      setMlPredictions((prev) => ({
-        ...prev,
-        [res.data.equipmentId]: res.data,
-      }));
+      const list = Array.isArray(res.data) ? res.data : [];
+
+      setMlPredictions((prev) => {
+        const next = { ...prev };
+        list.forEach((item) => {
+          if (item?.equipmentId) {
+            next[item.equipmentId] = item;
+          }
+        });
+        return next;
+      });
     } catch (e) {
       console.error("Failed to load turbofan ML prediction", e);
     }
   };
 
   // ----------------------------
-  // ADD MACHINE Functions (From Script 1)
+  // Add Machine Functions
   // ----------------------------
   const openAddModal = async () => {
     setIsAddModalOpen(true);
-    // Fetch available types from DB
     try {
       const res = await api.get("/api/machine-types/");
       setMachineTypes(res.data);
@@ -196,20 +213,16 @@ const PredictiveMaintenanceSystem = () => {
 
     setIsAdding(true);
     try {
-      // 1. Save to DB
       await api.post("/api/machines/add/", {
         name: newMachineName,
         type_id: selectedTypeId,
       });
 
-      // 2. Refresh the dashboard
       await fetchSyntheticData();
-      // Try to fetch ML predictions again in case the new machine matches a type
       fetchAirCompressorPrediction();
       fetchMillingPrediction();
       fetchTurbofanPrediction();
 
-      // 3. Close modal
       closeAddModal();
     } catch (error) {
       console.error("Failed to add machine", error);
@@ -220,14 +233,13 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // DELETE MACHINE Function (From Script 1)
+  // Delete Machine Function
   // ----------------------------
   const handleDeleteMachine = async (machineId) => {
     if (!window.confirm("Are you sure you want to remove this machine?")) return;
 
     try {
       await api.delete(`/api/machines/${machineId}/delete/`);
-      // Refresh data to update the UI
       await fetchSyntheticData();
     } catch (error) {
       console.error("Failed to delete machine", error);
@@ -298,14 +310,13 @@ const PredictiveMaintenanceSystem = () => {
 
   const performAnomalyDetection = (data, equipmentProfiles) => {
     const detectedAnomalies = [];
-    const WARN_Z = 2.5; // lower -> more anomalies
+    const WARN_Z = 2.5;
     const CRIT_Z = 3.2;
 
     equipmentProfiles.forEach((eq) => {
       const eqDataAll = data.filter((d) => d.equipmentId === eq.id);
       if (eqDataAll.length < 10) return;
 
-      // Baseline: first 70% of points, Recent: last 24 points
       const baseline = eqDataAll.slice(0, Math.floor(eqDataAll.length * 0.7));
       const recent = eqDataAll.slice(-24);
 
@@ -356,7 +367,7 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // ML → Prediction mapping (From Script 2)
+  // ML → Prediction mapping
   // ----------------------------
   const mlToPrediction = (ml) => {
     const { probFailure, riskLevel } = ml;
@@ -387,13 +398,12 @@ const PredictiveMaintenanceSystem = () => {
   };
 
   // ----------------------------
-  // Predictions (Hybrid: ML from Script 2 + Heuristic from Script 1)
+  // Predictions (ML-based)
   // ----------------------------
-  const generatePredictions = (data, equipmentProfiles) => {
+  const generatePredictions = (_data, equipmentProfiles) => {
     const predictionResults = [];
 
     equipmentProfiles.forEach((eq) => {
-      // 1. Check if we have ML predictions (Script 2 Logic)
       const ml = mlPredictions[eq.id];
 
       if (ml) {
@@ -402,95 +412,24 @@ const PredictiveMaintenanceSystem = () => {
         predictionResults.push({
           equipmentId: eq.id,
           equipmentName: eq.name,
-
           daysToFailure: derived.daysToFailure,
           confidence: ml.confidence,
           riskLevel: ml.riskLevel,
-
           estimatedCost: derived.estimatedCost,
           potentialSavings: derived.potentialSavings,
-
           recommendedAction:
             ml.riskLevel === "critical"
               ? "Schedule immediate maintenance"
               : ml.riskLevel === "medium"
               ? "Plan maintenance within 2 weeks"
               : "Continue monitoring",
-
           trends: {
             temperature: "stable",
             vibration: "stable",
             pressure: "stable",
           },
         });
-
-        return; // Exit this iteration if ML data found
       }
-
-      // 2. Fallback to Heuristic Logic (Script 1 Logic)
-      const eqData = data.filter((d) => d.equipmentId === eq.id).slice(-48);
-
-      const tempTrend = calculateTrend(eqData.map((d) => Number(d.temperature)));
-      const vibTrend = calculateTrend(eqData.map((d) => Number(d.vibration)));
-      const presTrend = calculateTrend(eqData.map((d) => Number(d.pressure)));
-
-      let daysToFailure = 90;
-      let confidence = 0.7;
-      let riskLevel = "low";
-
-      if (eq.health === "critical") {
-        daysToFailure = 5 + Math.random() * 10;
-        confidence = 0.85;
-        riskLevel = "critical";
-      } else if (eq.health === "warning") {
-        daysToFailure = 20 + Math.random() * 20;
-        confidence = 0.75;
-        riskLevel = "medium";
-      } else {
-        daysToFailure = 60 + Math.random() * 30;
-        confidence = 0.65;
-        riskLevel = "low";
-      }
-
-      predictionResults.push({
-        equipmentId: eq.id,
-        equipmentName: eq.name,
-        daysToFailure: Math.round(daysToFailure),
-        confidence,
-        riskLevel,
-        recommendedAction:
-          daysToFailure < 15
-            ? "Schedule immediate maintenance"
-            : daysToFailure < 30
-            ? "Plan maintenance within 2 weeks"
-            : "Continue monitoring",
-        trends: {
-          temperature:
-            tempTrend > 0.1
-              ? "increasing"
-              : tempTrend < -0.1
-              ? "decreasing"
-              : "stable",
-          vibration:
-            vibTrend > 0.05
-              ? "increasing"
-              : vibTrend < -0.05
-              ? "decreasing"
-              : "stable",
-          pressure:
-            presTrend > 0.2
-              ? "increasing"
-              : presTrend < -0.2
-              ? "decreasing"
-              : "stable",
-        },
-        estimatedCost:
-          riskLevel === "critical"
-            ? 5000 + Math.random() * 3000
-            : riskLevel === "medium"
-            ? 2000 + Math.random() * 2000
-            : 500 + Math.random() * 1000,
-      });
     });
 
     setPredictions(predictionResults);
@@ -545,12 +484,19 @@ const PredictiveMaintenanceSystem = () => {
   useEffect(() => {
     fetchMe();
     fetchSyntheticData();
-    // Fetch ML predictions
     fetchAirCompressorPrediction();
     fetchMillingPrediction();
     fetchTurbofanPrediction();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Regenerate predictions when ML data updates
+  useEffect(() => {
+    if (sensorData.length > 0 && equipment.length > 0) {
+      generatePredictions(sensorData, equipment);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mlPredictions]);
 
   const activeAlertsCount = useMemo(
     () => alerts.filter((a) => !a.acknowledged).length,
@@ -592,7 +538,6 @@ const PredictiveMaintenanceSystem = () => {
             </div>
 
             <div className="flex gap-2">
-              {/* Add Machine Button (From Script 1) */}
               <button
                 onClick={openAddModal}
                 className="bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 flex items-center gap-2"
@@ -619,7 +564,7 @@ const PredictiveMaintenanceSystem = () => {
           </div>
         </div>
 
-        {/* --- MODAL FOR ADDING MACHINE (From Script 1) --- */}
+        {/* Modal for Adding Machine */}
         {isAddModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
             <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200">
@@ -629,11 +574,11 @@ const PredictiveMaintenanceSystem = () => {
               >
                 <X size={24} />
               </button>
-              
+
               <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <Plus className="text-green-600" /> Add New Equipment
               </h2>
-              
+
               <form onSubmit={handleAddMachine} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -768,71 +713,81 @@ const PredictiveMaintenanceSystem = () => {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[...equipment]
-                    .sort((a, b) => b.id - a.id) // Sorts descending (Highest ID first)
+                    .sort((a, b) => b.id - a.id)
                     .map((eq) => {
-                    const pred = predictions.find((p) => p.equipmentId === eq.id);
-                    const ml = mlPredictions[eq.id];
+                      const pred = predictions.find((p) => p.equipmentId === eq.id);
+                      const ml = mlPredictions[eq.id];
 
-                    return (
-                      <div key={eq.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow relative group">
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold text-gray-900">{eq.name}</h3>
-                          
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`px-2 py-1 rounded text-xs font-medium ${
-                                pred?.riskLevel === "critical"
-                                  ? "bg-red-100 text-red-800"
-                                  : pred?.riskLevel === "medium"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : "bg-green-100 text-green-800"
-                              }`}
-                            >
-                              {pred?.riskLevel?.toUpperCase() || eq.health?.toUpperCase() || "GOOD"}
-                            </span>
+                      return (
+                        <div key={eq.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow relative group">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-semibold text-gray-900">{eq.name}</h3>
 
-                            {/* DELETE BUTTON (From Script 1) */}
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation(); 
-                                handleDeleteMachine(eq.id);
-                              }}
-                              className="text-gray-400 hover:text-red-600 transition-colors p-1"
-                              title="Remove Machine"
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`px-2 py-1 rounded text-xs font-medium ${
+                                  ml?.riskLevel === "critical"
+                                    ? "bg-red-100 text-red-800"
+                                    : ml?.riskLevel === "medium"
+                                    ? "bg-yellow-100 text-yellow-800"
+                                    : "bg-green-100 text-green-800"
+                                }`}
+                              >
+                                {ml?.riskLevel?.toUpperCase() || pred?.riskLevel?.toUpperCase() || eq.health?.toUpperCase() || "LOW"}
+                              </span>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteMachine(eq.id);
+                                }}
+                                className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                                title="Remove Machine"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
                           </div>
+
+                          <p className="text-xs text-gray-500">ID: {eq.id}</p>
+                          <p className="text-xs text-gray-500">Type: {eq.type}</p>
+                          <p className="text-xs text-gray-500">
+                            Added: {eq.dateAdded ? formatDate(eq.dateAdded) : "—"}
+                          </p>
+
+                          {ml ? (
+                            <div className="mt-3 space-y-2">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-600">Failure Probability:</span>
+                                <span className="text-sm font-bold text-gray-900">
+                                  {(ml.probFailure * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-600">Confidence:</span>
+                                <span className="text-sm font-bold text-gray-900">
+                                  {(ml.confidence * 100).toFixed(0)}%
+                                </span>
+                              </div>
+                              {pred && (
+                                <div className="flex justify-between items-center pt-2 border-t">
+                                  <span className="text-xs text-gray-600">Est. Failure:</span>
+                                  <span className="text-sm font-bold text-blue-600">
+                                    {pred.daysToFailure} days
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="mt-3 text-center py-2">
+                              <p className="text-xs text-gray-500">
+                                No ML predictions available
+                              </p>
+                            </div>
+                          )}
                         </div>
-
-                        <p className="text-xs text-gray-500">ID: {eq.id}</p>
-                        <p className="text-xs text-gray-500">Type: {eq.type}</p>
-                        <p className="text-xs text-gray-500">
-                          Added: {eq.dateAdded ? formatDate(eq.dateAdded) : "—"}
-                        </p>
-
-                        {/* ML Data Display (From Script 2) */}
-                        {ml && (
-                          <div className="mt-1 mb-2">
-                             <p className="text-sm text-gray-700">
-                               Failure Prob: <span className="font-semibold">{(ml.probFailure * 100).toFixed(1)}%</span>
-                             </p>
-                             <p className="text-sm text-gray-700">
-                               Confidence: <span className="font-semibold">{(ml.confidence * 100).toFixed(0)}%</span>
-                             </p>
-                          </div>
-                        )}
-
-                        {pred && (
-                          <div className="mt-3 pt-3 border-t">
-                            <p className="text-sm text-gray-700">
-                              <span className="font-medium">Est. failure:</span> {pred.daysToFailure} days
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               )}
             </div>

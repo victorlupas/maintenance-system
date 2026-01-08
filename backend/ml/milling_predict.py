@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 from pathlib import Path
 import joblib
-import numpy as np
 import pandas as pd
+import numpy as np
 
-MODEL_PATH = Path(__file__).resolve().parent / "models" / "milling_logreg.joblib"
+from ml.utils.postprocesses import spread_probability, risk_from_probability
+
+MODEL_PATH = Path(__file__).resolve().parent / "models" / "milling_windowed.joblib"
 _ART = None
 
 
@@ -18,77 +18,22 @@ def _load():
 
 def predict_milling(row: dict) -> dict:
     art = _load()
+    model = art["model"]
 
-    # Your milling_analysis saves {"pipeline": pipe, "num_features": ..., "cat_features": ...}
-    if isinstance(art, dict):
-        model = art.get("pipeline") or art.get("model")  # support both just in case
-        if model is None:
-            raise KeyError(f"Model artifact keys are: {list(art.keys())} (expected 'pipeline')")
+    X = pd.DataFrame([row])
+    X = X.replace([np.inf, -np.inf], 0.0).fillna(0.0)
 
-        num_feats = art.get(
-            "num_features",
-            [
-                "Air temperature [K]",
-                "Process temperature [K]",
-                "Rotational speed [rpm]",
-                "Torque [Nm]",
-                "Tool wear [min]",
-            ],
-        )
-        cat_feats = art.get("cat_features", ["Type"])
-    else:
-        # If you accidentally saved just the pipeline
-        model = art
-        num_feats = [
-            "Air temperature [K]",
-            "Process temperature [K]",
-            "Rotational speed [rpm]",
-            "Torque [Nm]",
-            "Tool wear [min]",
-        ]
-        cat_feats = ["Type"]
+    # ✅ Raw ML output
+    raw_prob = float(model.predict_proba(X)[0, 1])
 
-    # Build one-row dataframe with the exact columns the pipeline expects
-    record = {c: row.get(c, None) for c in (num_feats + cat_feats)}
-    X = pd.DataFrame([record])
+    # 🔍 DEBUG: Print to see what the model actually outputs
+    print(f"🔍 Milling RAW prob: {raw_prob:.4f}")
 
-    # Clean numeric cols
-    for c in num_feats:
-        X[c] = pd.to_numeric(X[c], errors="coerce")
-    X = X.replace([np.inf, -np.inf], np.nan)
-
-    # Ensure Type is valid so OneHotEncoder behaves consistently
-    if "Type" in X.columns:
-        v = str(X.loc[0, "Type"]).strip()
-        if v not in ("L", "M", "H"):
-            X.loc[0, "Type"] = "M"
-
-    # IMPORTANT: your pipeline DOES NOT necessarily include an imputer
-    # so we must eliminate NaNs here.
-    defaults = {
-        "Air temperature [K]": 300.0,
-        "Process temperature [K]": 310.0,
-        "Rotational speed [rpm]": 1500.0,
-        "Torque [Nm]": 40.0,
-        "Tool wear [min]": 0.0,
-    }
-    for c in num_feats:
-        if X[c].isna().any():
-            X[c] = X[c].fillna(defaults.get(c, 0.0))
-
-    prob = float(model.predict_proba(X)[0, 1])
-
-    if prob >= 0.7:
-        risk = "critical"
-    elif prob >= 0.4:
-        risk = "medium"
-    else:
-        risk = "low"
-
-    confidence = 0.7 + 0.25 * min(1.0, abs(prob - 0.5) / 0.4)
+    # ✅ Use the same post-processing as other machines
+    prob = spread_probability(raw_prob, machine_type="CNC")
 
     return {
-        "probFailure": prob,
-        "riskLevel": risk,
-        "confidence": float(confidence),
+        "probFailure": round(prob, 3),
+        "riskLevel": risk_from_probability(prob),
+        "confidence": 0.85,  # Higher confidence for CNC since they're well-monitored
     }

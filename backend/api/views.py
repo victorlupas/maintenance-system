@@ -13,28 +13,29 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-# NEW: ML predictor (create this file as discussed)
-# backend/ml/air_compressor_predict.py must exist
+# NEW: ML predictor
 from ml.air_compressor_predict import predict_air_compressor
 from ml.milling_predict import predict_milling
 from ml.turbofan_predict import predict_turbofan
+from api.utils.timeseries_features import window_features
+from api.utils.timeseries_features import build_named_window
 
 
 # Helper function to get the list of the machines
 def machine_list(request):
-    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type').order_by("-id")
-    
+    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type').order_by(
+        "-id")
+
     if not user_machines.exists():
-        # Fallback: if user has no machines, return empty or default
-        return Response({"equipment": [], "sensorData": []})
-    
+        return []
+
     machine_list = []
     for um in user_machines:
         machine_list.append({
             "id": um.machine.machine_id,
             "name": um.machine.name,
-            "type": um.machine.type.type_id, # This links to the CSV logic
-            "health": "good", # Default health, or you can add a health field to UserMachine later
+            "type": um.machine.type.type_id,
+            "health": "good",
             "dateAdded": um.created_at.isoformat(),
         })
 
@@ -60,7 +61,6 @@ def register(request):
     username = (request.data.get("username") or "").strip()
     email = (request.data.get("email") or "").strip().lower()
     password = request.data.get("password") or ""
-    dummy_user = User(username=username, email=email)
 
     try:
         validate_email(email)
@@ -69,7 +69,7 @@ def register(request):
             {"detail": "Invalid email address"},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     if User.objects.filter(email=email).exists():
         return Response(
             {"detail": "Email already exists"},
@@ -83,7 +83,7 @@ def register(request):
             {"detail": list(e.messages)},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     confirm_password = request.data.get("confirm_password") or ""
 
     if password != confirm_password:
@@ -115,6 +115,7 @@ def register(request):
         status=status.HTTP_201_CREATED,
     )
 
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def logout(request):
@@ -129,10 +130,10 @@ def logout(request):
                 {"detail": "Refresh token is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         token = RefreshToken(refresh_token)
         token.blacklist()
-        
+
         return Response(
             {"detail": "Logout successful"},
             status=status.HTTP_205_RESET_CONTENT,
@@ -141,7 +142,8 @@ def logout(request):
         return Response(
             {"detail": "Invalid token or already blacklisted"},
             status=status.HTTP_400_BAD_REQUEST,
-        ) 
+        )
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -158,18 +160,18 @@ def add_machine(request):
     """User chooses a type and gives it a name."""
     type_id = request.data.get("type_id")
     name = request.data.get("name")
-    
+
     if not type_id or not name:
         return Response({"detail": "Type and Name are required"}, status=400)
-        
+
     m_type = get_object_or_404(MachineType, pk=type_id)
-    
+
     # 1. Create the Machine (ID generates automatically via models.py logic)
     machine = Machine.objects.create(type=m_type, name=name)
-    
+
     # 2. Assign to User
-    UserMachine.objects.create(user=request.user, machine=machine, nickname = name, is_tracking=True)
-    
+    UserMachine.objects.create(user=request.user, machine=machine, nickname=name, is_tracking=True)
+
     return Response({
         "id": machine.machine_id,
         "name": machine.name,
@@ -183,27 +185,14 @@ def synthetic_data(request):
     """
     Generate data ONLY for machines tracking by the current user.
     """
-    # 1. Get the user's machines from the DB
-    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type').order_by("-id")
-    
+    user_machines = UserMachine.objects.filter(user=request.user).select_related('machine', 'machine__type').order_by(
+        "-id")
+
     if not user_machines.exists():
-        # Fallback: if user has no machines, return empty or default
         return Response({"equipment": [], "sensorData": []})
 
-    # 2. Convert DB objects to a simple list for the synthetic service
-    # We pass the real MachineType ID (e.g., 'air_compressor') so the service knows what math to use.
-    machine_list = []
-    for um in user_machines:
-        machine_list.append({
-            "id": um.machine.machine_id,
-            "name": um.machine.name,
-            "type": um.machine.type.type_id, # This links to the CSV logic
-            "health": "good", # Default health, or you can add a health field to UserMachine later
-            "dateAdded": um.created_at.isoformat(),
-        })
-
-    # 3. Call the updated service
-    payload = generate_timeseries(machine_list, hours=100)
+    machines = machine_list(request)
+    payload = generate_timeseries(machines, hours=100)
     return Response(payload)
 
 
@@ -214,127 +203,189 @@ def delete_machine(request, machine_id):
     Removes the machine from the user's dashboard.
     """
     try:
-        # Find the specific link between THIS user and THAT machine
         user_machine = UserMachine.objects.get(
-            user=request.user, 
+            user=request.user,
             machine__machine_id=machine_id
         )
         user_machine.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-        
+
     except UserMachine.DoesNotExist:
         return Response(
-            {"detail": "Machine not found or not tracked by you."}, 
+            {"detail": "Machine not found or not tracked by you."},
             status=status.HTTP_404_NOT_FOUND
         )
 
 
+# Keep the SERVER version (doc 3) for these - they're much better!
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def air_compressor_prediction(request):
+    machines = machine_list(request)
+    ac_machines = [m for m in machines if m["type"] == "AC"]
 
-    machines_list = machine_list(request)
-    payload = generate_timeseries(machines_list, hours=100)
-    rows = [r for r in payload.get("sensorData", []) if r.get("equipmentId") == "AC"]
-    if not rows:
-        return Response({"detail": f"No {machines_list['name']} data available."}, status=status.HTTP_404_NOT_FOUND)
+    if not ac_machines:
+        return Response([])
 
-    latest = rows[-1]
+    payload = generate_timeseries(machines, hours=100)
+    results = []
 
-    mapped = {
-        "motor_power": latest.get("powerConsumption"),
-        "outlet_temp": latest.get("temperature"),
-        "haccz": latest.get("vibration"),
-        "outlet_pressure_bar": (
-            float(latest["pressure"]) / 14.5038 if latest.get("pressure") is not None else None
-        ),
-        # missing → None (predictor should handle)
-        "rpm": None, "torque": None, "air_flow": None, "noise_db": None,
-        "wpump_outlet_press": None, "water_inlet_temp": None, "water_outlet_temp": None,
-        "wpump_power": None, "water_flow": None, "oilpump_power": None, "oil_tank_temp": None,
-        "gaccx": None, "gaccy": None, "gaccz": None, "haccx": None, "haccy": None,
-    }
+    for ac in ac_machines:
+        rows = [
+            r for r in payload.get("sensorData", [])
+            if r.get("equipmentId") == ac["id"]
+        ]
 
-    pred = predict_air_compressor(mapped)
+        if len(rows) < 10:
+            continue
 
-    return Response({
-        "equipmentId": f"{machines_list['id']}",
-        "equipmentName": f"{machines_list['name']}",
-        **pred,
-    })
+        WINDOW = 24
+        recent = rows[-WINDOW:]
+
+        temps = [r["temperature"] for r in recent if r.get("temperature") is not None]
+        vibs = [r["vibration"] for r in recent if r.get("vibration") is not None]
+        press = [r["pressure"] for r in recent if r.get("pressure") is not None]
+
+        t_feat = window_features(temps)
+        v_feat = window_features(vibs)
+        p_feat = window_features(press)
+
+        mapped = {
+            "motor_power": sum(r.get("powerConsumption", 0) for r in recent) / len(recent),
+            "outlet_temp": t_feat["mean"],
+            "haccz": v_feat["std"],
+            "outlet_pressure_bar": p_feat["mean"] / 14.5038,
+        }
+
+        pred = predict_air_compressor(mapped)
+
+        results.append({
+            "equipmentId": ac["id"],
+            "equipmentName": ac["name"],
+            **pred,
+        })
+
+    return Response(results)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def milling_prediction(request):
+    machines = machine_list(request)
+    cnc_machines = [m for m in machines if m["type"] == "CNC"]
+
+    if not cnc_machines:
+        return Response([])
+
+    payload = generate_timeseries(machines, hours=100)
+    results = []
+
+    for cnc in cnc_machines:
+        rows = [
+            r for r in payload.get("sensorData", [])
+            if r.get("equipmentId") == cnc["id"]
+        ]
+
+        if len(rows) < 10:
+            continue
+
+        WINDOW = 24
+        recent = rows[-WINDOW:]
+
+        temps = [r["temperature"] for r in recent if r.get("temperature") is not None]
+        vibs = [r["vibration"] for r in recent if r.get("vibration") is not None]
+        press = [r["pressure"] for r in recent if r.get("pressure") is not None]
+
+        mapped = {}
+
+        mapped.update(build_named_window(
+            [t + 273.15 for t in temps],
+            "Air temperature [K]"
+        ))
+
+        mapped.update(build_named_window(
+            [t + 273.15 for t in temps],
+            "Process temperature [K]"
+        ))
+
+        mapped.update(build_named_window(
+            [p * 30.0 for p in press],
+            "Rotational speed [rpm]"
+        ))
+
+        mapped.update(build_named_window(
+            [v * 20.0 for v in vibs],
+            "Torque [Nm]"
+        ))
+
+        mapped.update(build_named_window(
+            [r.get("powerConsumption", 0.0) for r in recent],
+            "Tool wear [min]"
+        ))
+
+        mapped["Type"] = "M"
+
+        try:
+            pred = predict_milling(mapped)
+        except Exception as e:
+            print("❌ MILLING PREDICT FAILED")
+            print("Machine:", cnc["id"])
+            print("Exception:", repr(e))
+            continue
+
+        results.append({
+            "equipmentId": cnc["id"],
+            "equipmentName": cnc["name"],
+            **pred,
+        })
+
+    return Response(results)
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def milling_predict(request):
+def turbofan_prediction(request):
+    machines = machine_list(request)
+    te_machines = [m for m in machines if m["type"] == "TE"]
 
-    machines_list = machine_list(request)
-    payload = generate_timeseries(machines_list, hours=100)
-    rows = [r for r in payload.get("sensorData", []) if r.get("equipmentId") == "CNC"]
-    if not rows:
-        return Response({"detail": f"No {machines_list['name']} data available"}, status=status.HTTP_404_NOT_FOUND)
+    if not te_machines:
+        return Response([])
 
-    latest = rows[-1]
+    payload = generate_timeseries(machines, hours=100)
+    results = []
 
-    # map UI schema -> AI4I-ish features you trained on
-    # your synthetic milling mapping used:
-    # temperature = Process temperature (C), vibration ~ Torque/20, pressure ~ RPM/30, powerConsumption = Tool wear
-    process_k = (float(latest["temperature"]) + 273.15) if latest.get("temperature") is not None else None
+    for te in te_machines:
+        rows = [
+            r for r in payload.get("sensorData", [])
+            if r.get("equipmentId") == te["id"]
+        ]
 
-    mapped = {
-        "Process temperature [K]": process_k,
-        "Torque [Nm]": float(latest["vibration"]) * 20.0 if latest.get("vibration") is not None else None,
-        "Rotational speed [rpm]": float(latest["pressure"]) * 30.0 if latest.get("pressure") is not None else None,
-        "Tool wear [min]": float(latest["powerConsumption"]) if latest.get("powerConsumption") is not None else None,
+        if not rows:
+            continue
 
-        # FIXED:
-        "Air temperature [K]": (process_k - 10.0) if process_k is not None else None,
-        "Type": "M",
-    }
+        latest = rows[-1]
 
-    pred = predict_milling(mapped)
+        mapped = {
+            "op1": latest.get("powerConsumption", 0.0),
+            "op2": latest.get("pressure", 0.0),
+            "op3": 0.0,
+            "s1": latest.get("temperature", 0.0),
+            "s2": latest.get("vibration", 0.0),
+            "s3": latest.get("pressure", 0.0),
+        }
 
-    return Response({
-        "equipmentId": f"{machines_list['id']}",
-        "equipmentName": f"{machines_list['name']}",
-        **pred,
-    })
+        try:
+            pred = predict_turbofan(mapped)
+        except Exception as e:
+            print("❌ TURBOFAN PREDICT FAILED")
+            print("Machine:", te["id"])
+            print("Exception:", repr(e))
+            continue
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def turbofan_predict(request):
-    """
-    Predicts RUL (daysToFailure) / riskLevel / confidence for TURBO-001.
-    IMPORTANT: this is a "best-effort" mapping from your synthetic schema
-    (temperature/vibration/pressure/powerConsumption) -> FD001-like features.
-    """
-    machines_list = machine_list(request)
-    payload = generate_timeseries(machines_list, hours=100)
-    rows = [r for r in payload.get("sensorData", []) if r.get("equipmentId") == "TE"]
-    if not rows:
-        return Response({"detail": f"No {machines_list['name']} data available"}, status=status.HTTP_404_NOT_FOUND)
+        results.append({
+            "equipmentId": te["id"],
+            "equipmentName": te["name"],
+            **pred,
+        })
 
-    latest = rows[-1]
-
-    # --- Best-effort mapping UI -> turbofan features ---
-    # FD001 features are: op1,op2,op3,s1..s21 (you trained on those)
-    # Your synthetic rows have: temperature, vibration, pressure, powerConsumption
-    # We'll map a few, and leave the rest missing -> filled in predict_turbofan().
-    mapped = {
-        "op1": latest.get("powerConsumption"),
-        "op2": latest.get("pressure"),
-        "op3": 0,
-
-        "s1": latest.get("temperature"),
-        "s2": latest.get("vibration"),
-        "s3": latest.get("pressure"),
-    }
-    print("TF latest UI row:", latest)
-    print("TF mapped keys:", mapped)
-    pred = predict_turbofan(mapped)
-
-    return Response({
-        "equipmentId": f"{machines_list['id']}",
-        "equipmentName": f"{machines_list['name']}",
-        **pred,
-    })
+    return Response(results)

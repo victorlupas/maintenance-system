@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 from pathlib import Path
+import pandas as pd
 import joblib
 import numpy as np
-import pandas as pd
 import math
 
-MODEL_PATH = Path(__file__).resolve().parent / "models" / "turbofan_fd001_rf_rul.joblib"
+from ml.utils.postprocesses import spread_probability, risk_from_probability
+
+MODEL_PATH = Path(__file__).resolve().parent / "models" / "turbofan_fd001_windowed.joblib"
 _ART = None
 
 
@@ -16,7 +16,6 @@ def _load():
         _ART = joblib.load(MODEL_PATH)
     return _ART
 
-_ART = None
 
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
@@ -24,43 +23,27 @@ def _sigmoid(x: float) -> float:
 
 def predict_turbofan(row: dict) -> dict:
     art = _load()
-    pipeline = art["pipeline"]
+    model = art["pipeline"]
     feats = art["features"]
 
-    X = pd.DataFrame([{f: row.get(f, None) for f in feats}])
-    X = X.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    # Build input exactly as trained
+    X = pd.DataFrame([{f: row.get(f, 0.0) for f in feats}])
+    X = X.replace([np.inf, -np.inf], 0.0).fillna(0.0)
 
-    # keep it simple for now; later we can store medians in the artifact
-    medians = art.get("medians", {})
-    for f in feats:
-        if X[f].isna().any():
-            X[f] = X[f].fillna(medians.get(f, 0))
+    # ✅ Predict Remaining Useful Life
+    rul = float(model.predict(X)[0])
+    days = max(int(round(rul)), 1)
 
-    rul = float(pipeline.predict(X)[0])
-    if not np.isfinite(rul):
-        rul = 0.0
-    rul = max(0.0, rul)
+    # ✅ Convert RUL → raw failure probability
+    # (centered around ~60 days, smooth curve)
+    raw_prob = _sigmoid((60 - days) / 12)
 
-    days = int(round(rul))
-
-    # risk from RUL
-    if days <= 15:
-        risk = "critical"
-    elif days <= 40:
-        risk = "medium"
-    else:
-        risk = "low"
-
-    # Convert days -> probFailure (sigmoid centered around 40 days)
-    # days=40 -> ~0.5 ; days small -> near 1 ; days large -> near 0
-    prob = float(_sigmoid((40.0 - days) / 10.0))
-
-    # confidence heuristic (you already like this style)
-    confidence = 0.7 + 0.25 * min(1.0, abs(prob - 0.5) / 0.4)
+    # ✅ Single post-process step (TE profile)
+    prob = spread_probability(raw_prob, machine_type="TE")
 
     return {
-        "probFailure": prob,
+        "probFailure": round(prob, 3),
         "daysToFailure": days,
-        "riskLevel": risk,
-        "confidence": float(confidence),
+        "riskLevel": risk_from_probability(prob),
+        "confidence": 0.95,
     }
