@@ -88,7 +88,7 @@ def register(request):
 
     if password != confirm_password:
         return Response(
-            {"detail": "Passwords do not match"},
+            {"detail": "Confirm password is required and must match password"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 

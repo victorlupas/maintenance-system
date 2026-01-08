@@ -4,6 +4,7 @@ import { api } from "../apiClient";
 export default function Signup() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
@@ -11,14 +12,18 @@ export default function Signup() {
     e.preventDefault();
     setError("");
 
+      if (password !== confirmPassword) {
+    setError("Passwords must match");
+    return;
+    }
+
     try {
-      await api.post("/api/auth/register/", { username, email, password });
+      await api.post("/api/auth/register/", { username, email, password, confirm_password: confirmPassword });
 
       // optional: auto-login right after register
       const loginRes = await api.post("/api/auth/login/", { username, password });
       localStorage.setItem("access", loginRes.data.access);
       localStorage.setItem("refresh", loginRes.data.refresh);
-
       window.location.href = "/";
     } catch (err) {
       const msg = err?.response?.data?.detail || "Signup failed";
@@ -31,7 +36,19 @@ export default function Signup() {
       <form onSubmit={onSubmit} className="bg-white shadow-md rounded-lg p-6 w-full max-w-md">
         <h1 className="text-2xl font-bold mb-4">Create account</h1>
 
-        {error && <div className="bg-red-50 text-red-700 p-3 rounded mb-4">{error}</div>}
+        {error && (
+          <div className="bg-red-50 text-red-700 p-3 rounded mb-4">
+            {Array.isArray(error) ? (
+              <ul className="list-disc list-inside space-y-0.5">
+                {error.map((msg, idx) => (
+                  <li key={idx}>{msg}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>{error}</p>
+            )}
+          </div>
+        )}
 
         <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
         <input
@@ -40,7 +57,7 @@ export default function Signup() {
           onChange={(e) => setUsername(e.target.value)}
         />
 
-        <label className="block text-sm font-medium text-gray-700 mb-1">Email (optional)</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
         <input
           className="w-full border rounded px-3 py-2 mb-3"
           value={email}
@@ -53,6 +70,14 @@ export default function Signup() {
           className="w-full border rounded px-3 py-2 mb-4"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+        />
+
+        <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+        <input
+          type="password"
+          className="w-full border rounded px-3 py-2 mb-4"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
         />
 
         <button className="w-full bg-blue-600 text-white rounded py-2 hover:bg-blue-700">
