@@ -1,15 +1,17 @@
 from __future__ import annotations
-
+from datetime import timedelta
+from django.utils import timezone
 from django.contrib.auth.models import User
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from .models import Machine, MachineType, UserMachine
+from .models import Alert, Machine, MachineType, UserMachine
 from django.shortcuts import get_object_or_404
 from .services.synthetic import generate_timeseries
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import validate_email
+from django.core.mail import send_mail
 from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -40,6 +42,61 @@ def machine_list(request):
         })
 
     return machine_list
+
+
+# Helper for email alerts
+# backend/api/views.py
+
+def check_and_send_alert(user, machine_id, machine_name, prediction_result):
+    """
+    Final Version: Checks for critical status and respects the 60-minute cooldown.
+    """
+    # 1. Check Risk Level
+    risk_level = prediction_result.get("riskLevel", "").lower()
+    is_critical = "critical" in risk_level or "fail" in risk_level
+
+    if not is_critical:
+        return  # Everything is fine, do nothing.
+
+    # 2. Fetch Machine
+    try:
+        machine_obj = Machine.objects.get(machine_id=machine_id)
+    except Machine.DoesNotExist:
+        return
+
+    # 3. ANTI-SPAM CHECK (Re-enabled)
+    # Checks if we already sent a critical alert for this machine in the last 60 minutes
+    recent_alert = Alert.objects.filter(
+        machine=machine_obj,
+        created_for=user,
+        severity="critical",
+        timestamp__gte=timezone.now() - timedelta(minutes=60)
+    ).exists()
+
+    if recent_alert:
+        print(f"⏳ SKIPPING email for {machine_name}: Already sent in last hour.")
+        return
+
+    # 4. Create Alert & Send Email
+    print(f"📧 Sending CRITICAL alert for {machine_name}...")
+    
+    Alert.objects.create(
+        machine=machine_obj,
+        created_for=user,
+        severity="critical",
+        description=f"Automated Alert: Machine {machine_name} is in CRITICAL state."
+    )
+
+    try:
+        send_mail(
+            subject=f"CRITICAL WARNING: {machine_name}",
+            message=f"Hello {user.username},\n\nYour machine '{machine_name}' (ID: {machine_id}) has reached a CRITICAL state.\n\nPlease inspect it immediately.\n\nRegards,\nMaintenance System",
+            from_email="system@maintenance.app",
+            recipient_list=[user.email],
+            fail_silently=True # Set to True for production so it doesn't crash the app if email fails
+        )
+    except Exception as e:
+        print(f"❌ Email sending failed: {e}")
 
 
 @api_view(["GET"])
@@ -88,7 +145,7 @@ def register(request):
 
     if password != confirm_password:
         return Response(
-            {"detail": "Confirm password is required and must match password"},
+            {"detail": "Passwords do not match"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -258,6 +315,9 @@ def air_compressor_prediction(request):
         }
 
         pred = predict_air_compressor(mapped)
+        
+        # --- NEW: Check for Alert ---
+        check_and_send_alert(request.user, ac["id"], ac["name"], pred)
 
         results.append({
             "equipmentId": ac["id"],
@@ -325,8 +385,12 @@ def milling_prediction(request):
 
         mapped["Type"] = "M"
 
+        
+
         try:
             pred = predict_milling(mapped)
+            # --- NEW: Check for Alert ---
+            check_and_send_alert(request.user, cnc["id"], cnc["name"], pred)
         except Exception as e:
             print("❌ MILLING PREDICT FAILED")
             print("Machine:", cnc["id"])
@@ -376,6 +440,10 @@ def turbofan_prediction(request):
 
         try:
             pred = predict_turbofan(mapped)
+            
+            # --- NEW: Check for Alert ---
+            check_and_send_alert(request.user, te["id"], te["name"], pred)
+            
         except Exception as e:
             print("❌ TURBOFAN PREDICT FAILED")
             print("Machine:", te["id"])

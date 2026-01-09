@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import timedelta
+import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -108,3 +109,16 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
 }
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'       # Replace with your email provider's SMTP server
+EMAIL_PORT = 587                    # Common ports: 587 (TLS) or 465 (SSL)
+EMAIL_USE_TLS = True                # True for port 587, False for 465
+# EMAIL_USE_SSL = False             # True for port 465, False for 587
+
+# Credentials (BEST PRACTICE: Load these from environment variables)
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'victorlupas6@gmail.com') 
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', 'lqni vyvd ykrt tcge')
+
+# Default sender address
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
