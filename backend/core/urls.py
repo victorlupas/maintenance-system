@@ -21,4 +21,7 @@ urlpatterns = [
     path("api/auth/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
+    # File upload endpoints
+    path("api/machines/add-with-data/", add_machine_with_data),
+    path("api/machines/<str:machine_id>/predict/", predict_from_upload),
 ]

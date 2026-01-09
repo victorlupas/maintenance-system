@@ -6,7 +6,8 @@ import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import classification_report, roc_auc_score
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_PATH = BASE_DIR / "data" / "air_compressor.csv"
@@ -16,42 +17,51 @@ OUT_DIR.mkdir(exist_ok=True)
 MODEL_PATH = OUT_DIR / "air_compressor_windowed.joblib"
 
 FEATURES = [
-    "temp_mean", "temp_std", "temp_trend",
-    "vib_mean", "vib_std", "vib_trend",
-    "press_mean", "press_std", "press_trend",
+    "temperature", "vibration", "pressure", "power",
 ]
 
+
 def build_target(df: pd.DataFrame) -> pd.Series:
-    fault = np.zeros(len(df), dtype=int)
-
-    for col in ["bearings", "wpump", "radiator", "exvalve", "acmotor"]:
-        fault |= (df[col].astype(str).str.strip() != "Ok").astype(int)
-
-    # 🔧 SAFETY FIX: ensure at least some healthy samples
-    if fault.sum() == len(fault):
-        n = max(1, int(0.1 * len(fault)))  # 10% healthy
-        fault[:n] = 0
-
+    """
+    Create fault labels based on sensor thresholds.
+    High temperature, vibration, or pressure indicates potential failure.
+    Uses a combined score approach to ensure balanced classes.
+    """
+    # Create a risk score based on normalized sensor values
+    scores = np.zeros(len(df))
+    
+    if "outlet_temp" in df.columns:
+        temp = df["outlet_temp"]
+        scores += (temp - temp.min()) / (temp.max() - temp.min() + 1e-6)
+    
+    if "haccz" in df.columns:
+        vib = df["haccz"]
+        scores += (vib - vib.min()) / (vib.max() - vib.min() + 1e-6)
+    
+    if "outlet_pressure_bar" in df.columns:
+        press = df["outlet_pressure_bar"]
+        scores += (press - press.min()) / (press.max() - press.min() + 1e-6)
+    
+    # Label top 40% as potential failures (high risk)
+    threshold = np.percentile(scores, 60)
+    fault = (scores > threshold).astype(int)
+    
     return pd.Series(fault, name="fault")
+
 
 def main():
     df = pd.read_csv(DATA_PATH)
     y = build_target(df)
 
-    # Fake windowing from raw signals (offline approximation)
+    # Map raw columns to standardized feature names
     X = pd.DataFrame({
-        "temp_mean": df["outlet_temp"],
-        "temp_std": 0.0,
-        "temp_trend": 0.0,
-        "vib_mean": df["haccz"],
-        "vib_std": 0.0,
-        "vib_trend": 0.0,
-        "press_mean": df["outlet_pressure_bar"],
-        "press_std": 0.0,
-        "press_trend": 0.0,
+        "temperature": df["outlet_temp"] if "outlet_temp" in df.columns else 0.0,
+        "vibration": df["haccz"] if "haccz" in df.columns else 0.0,
+        "pressure": df["outlet_pressure_bar"] if "outlet_pressure_bar" in df.columns else 0.0,
+        "power": df["motor_power"] if "motor_power" in df.columns else 0.0,
     })
 
-    X = X.fillna(X.median())
+    X = X.fillna(0.0).replace([np.inf, -np.inf], 0.0)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, stratify=y, random_state=42
@@ -59,10 +69,19 @@ def main():
 
     model = Pipeline([
         ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(max_iter=2000, class_weight="balanced")),
+        ("clf", GradientBoostingClassifier(
+            n_estimators=100,
+            max_depth=4,
+            random_state=42
+        )),
     ])
 
     model.fit(X_train, y_train)
+
+    y_prob = model.predict_proba(X_test)[:, 1]
+    print("\n=== Air Compressor Model ===")
+    print(classification_report(y_test, (y_prob > 0.5).astype(int), digits=4))
+    print("ROC AUC:", roc_auc_score(y_test, y_prob))
 
     joblib.dump(
         {
@@ -72,7 +91,8 @@ def main():
         MODEL_PATH,
     )
 
-    print("✅ Saved:", MODEL_PATH)
+    print(f"Saved to {MODEL_PATH}")
+
 
 if __name__ == "__main__":
     main()

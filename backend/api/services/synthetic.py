@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import random
 import pandas as pd
+import numpy as np
 
 from api.services.degradation_state import update_health
 
@@ -24,6 +25,23 @@ def _iso(ts: datetime) -> str:
     return ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Thresholds for fault classification (from training data analysis)
+# Air Compressor: faulty when values exceed these
+# Widened range to produce more gradual predictions
+AC_FAULT_THRESHOLDS = {
+    "temperature": 145,  # outlet_temp (widened from 131)
+    "vibration": 5.5,    # haccz (widened from 4.3)
+    "pressure": 7.5,     # outlet_pressure_bar (widened from 5.9)
+    "power": 14000,      # motor_power (widened from 10320)
+}
+AC_HEALTHY_VALUES = {
+    "temperature": 95,   # lowered from 110
+    "vibration": 2.0,    # lowered from 3.0
+    "pressure": 1.5,     # lowered from 2.8
+    "power": 3000,       # lowered from 4761
+}
+
+
 def generate_timeseries(machines: list, hours: int = 100) -> dict:
     now = datetime.now(timezone.utc)
     sensor_rows = []
@@ -40,7 +58,7 @@ def generate_timeseries(machines: list, hours: int = 100) -> dict:
         m_name = machine["name"]
         m_type = machine["type"]
 
-        # 🔥 persistent degradation
+        # persistent degradation
         health = update_health(m_id)
         severity = 1.0 - health  # 0 = perfect, 1 = bad
 
@@ -48,107 +66,135 @@ def generate_timeseries(machines: list, hours: int = 100) -> dict:
         # Air Compressor
         # ---------------------------------------------------------
         if m_type == "AC":
-            chunk = air_df.sample(n=hours, replace=True).reset_index(drop=True)
-
             for i in range(hours):
                 ts = now - timedelta(hours=(hours - 1 - i))
-                row = chunk.iloc[i]
+                
+                # Progress through time (0 to 1)
+                progress = i / max(1, hours - 1)
+                
+                # Combine time progress with severity for realistic degradation
+                # severity comes from persistent health state (0=healthy, 1=failing)
+                # Use linear scaling - severity directly controls degradation level
+                degradation = severity * 0.7 + progress * 0.3  # severity is primary driver
+                degradation = min(degradation, 1.0)
+                
+                # Interpolate between healthy and faulty values based on degradation
+                temp = AC_HEALTHY_VALUES["temperature"] + degradation * (AC_FAULT_THRESHOLDS["temperature"] - AC_HEALTHY_VALUES["temperature"])
+                vib = AC_HEALTHY_VALUES["vibration"] + degradation * (AC_FAULT_THRESHOLDS["vibration"] - AC_HEALTHY_VALUES["vibration"])
+                press = AC_HEALTHY_VALUES["pressure"] + degradation * (AC_FAULT_THRESHOLDS["pressure"] - AC_HEALTHY_VALUES["pressure"])
+                power = AC_HEALTHY_VALUES["power"] + degradation * (AC_FAULT_THRESHOLDS["power"] - AC_HEALTHY_VALUES["power"])
+                
+                # Add realistic noise
+                temp += random.gauss(0, 3)
+                vib += random.gauss(0, 0.2)
+                press += random.gauss(0, 0.3)
+                power += random.gauss(0, 200)
 
-                # ✅ Store RAW values for ML (no degradation)
-                raw_temp = float(row["outlet_temp"])
-                raw_vib = float(row["haccz"])
-                raw_press = float(row["outlet_pressure_bar"]) * 14.5038
-                raw_power = float(row.get("motor_power", 0.6))
-
-                # ✅ Apply degradation ONLY to display values
                 sensor_rows.append({
                     "equipmentId": m_id,
                     "equipmentName": m_name,
                     "timestamp": _iso(ts),
 
-                    # Display values (with degradation for charts)
-                    "temperature": raw_temp * (1 + severity * 0.4),
-                    "vibration": raw_vib * (1 + severity * 0.8),
-                    "pressure": raw_press * (1 - severity * 0.3),
-                    "powerConsumption": raw_power * (1 + severity * 0.6),
+                    # Display values (same as ML values now)
+                    "temperature": temp,
+                    "vibration": vib,
+                    "pressure": press,
+                    "powerConsumption": power,
 
-                    # ✅ NEW: Raw values for ML prediction
-                    "raw_outlet_temp": raw_temp,
-                    "raw_haccz": raw_vib,
-                    "raw_outlet_pressure_bar": raw_press / 14.5038,
-                    "raw_motor_power": raw_power,
+                    # Raw values for ML prediction (same scale)
+                    "raw_outlet_temp": temp,
+                    "raw_haccz": vib,
+                    "raw_outlet_pressure_bar": press,
+                    "raw_motor_power": power,
                 })
 
         # ---------------------------------------------------------
         # Milling Machine
         # ---------------------------------------------------------
         elif m_type == "CNC":
-            chunk = mill_df.sample(n=hours, replace=True).reset_index(drop=True)
-
+            # CNC healthy vs faulty ranges (from ai4i2020.csv analysis)
+            # Failures correlate with: high temp, high torque, high wear, low RPM
+            CNC_HEALTHY = {"temperature": 35, "vibration": 1.5, "pressure": 50, "power": 50}
+            CNC_FAULTY = {"temperature": 42, "vibration": 3.5, "pressure": 40, "power": 200}
+            
             for i in range(hours):
                 ts = now - timedelta(hours=(hours - 1 - i))
-                row = chunk.iloc[i]
-
-                # ✅ Raw values (no degradation)
-                raw_proc_temp = float(row["Process temperature [K]"])
-                raw_torque = float(row["Torque [Nm]"])
-                raw_rpm = float(row["Rotational speed [rpm]"])
-                raw_wear = float(row["Tool wear [min]"])
-
-                # Convert to display units
-                display_temp = (raw_proc_temp - 273.15)
-                display_vib = raw_torque / 20.0
-                display_press = raw_rpm / 30.0
+                
+                # Progress through time
+                progress = i / max(1, hours - 1)
+                degradation = severity * 0.7 + progress * 0.3
+                degradation = min(degradation, 1.0)
+                
+                # Interpolate between healthy and faulty
+                temp = CNC_HEALTHY["temperature"] + degradation * (CNC_FAULTY["temperature"] - CNC_HEALTHY["temperature"])
+                vib = CNC_HEALTHY["vibration"] + degradation * (CNC_FAULTY["vibration"] - CNC_HEALTHY["vibration"])
+                press = CNC_HEALTHY["pressure"] + degradation * (CNC_FAULTY["pressure"] - CNC_HEALTHY["pressure"])
+                power = CNC_HEALTHY["power"] + degradation * (CNC_FAULTY["power"] - CNC_HEALTHY["power"])
+                
+                # Add noise
+                temp += random.gauss(0, 1)
+                vib += random.gauss(0, 0.15)
+                press += random.gauss(0, 2)
+                power += random.gauss(0, 10)
 
                 sensor_rows.append({
                     "equipmentId": m_id,
                     "equipmentName": m_name,
                     "timestamp": _iso(ts),
 
-                    # Display values (with degradation)
-                    "temperature": display_temp * (1 + severity * 0.3),
-                    "vibration": display_vib * (1 + severity * 0.6),
-                    "pressure": display_press * (1 - severity * 0.25),
-                    "powerConsumption": raw_wear * (1 + severity * 0.5),
-
-                    # ✅ NEW: Raw values for ML
-                    "raw_Process_temperature_K": raw_proc_temp,
-                    "raw_Torque_Nm": raw_torque,
-                    "raw_Rotational_speed_rpm": raw_rpm,
-                    "raw_Tool_wear_min": raw_wear,
-                    "raw_Air_temperature_K": float(row.get("Air temperature [K]", raw_proc_temp)),
+                    # Display and ML values
+                    "temperature": temp,
+                    "vibration": vib,
+                    "pressure": press,
+                    "powerConsumption": power,
                 })
 
         # ---------------------------------------------------------
         # Turbofan
         # ---------------------------------------------------------
         elif m_type == "TE":
+            # Turbofan: RUL model predicts remaining cycles
+            # Low RUL = high failure probability
+            # severity affects how far along the degradation curve we are
+            TE_HEALTHY = {"temperature": 600, "vibration": 1.0, "pressure": 30, "power": 0.6}
+            TE_FAULTY = {"temperature": 680, "vibration": 5.0, "pressure": 22, "power": 1.0}
+            
             for i in range(hours):
                 ts = now - timedelta(hours=(hours - 1 - i))
-                d = i / max(1, hours - 1)
-
-                base_temp = 600 + 60 * d
-                base_vib = 1.0 + 3.5 * d
-                base_press = 30 - 6 * d
-                base_power = 0.6 + 0.4 * d
+                
+                # Progress through time
+                progress = i / max(1, hours - 1)
+                degradation = severity * 0.7 + progress * 0.3
+                degradation = min(degradation, 1.0)
+                
+                # Interpolate between healthy and faulty
+                temp = TE_HEALTHY["temperature"] + degradation * (TE_FAULTY["temperature"] - TE_HEALTHY["temperature"])
+                vib = TE_HEALTHY["vibration"] + degradation * (TE_FAULTY["vibration"] - TE_HEALTHY["vibration"])
+                press = TE_HEALTHY["pressure"] + degradation * (TE_FAULTY["pressure"] - TE_HEALTHY["pressure"])
+                power = TE_HEALTHY["power"] + degradation * (TE_FAULTY["power"] - TE_HEALTHY["power"])
+                
+                # Add noise
+                temp += random.gauss(0, 5)
+                vib += random.gauss(0, 0.3)
+                press += random.gauss(0, 0.5)
+                power += random.gauss(0, 0.05)
 
                 sensor_rows.append({
                     "equipmentId": m_id,
                     "equipmentName": m_name,
                     "timestamp": _iso(ts),
 
-                    # Display values (with degradation)
-                    "temperature": base_temp * (1 + severity * 0.3) + random.gauss(0, 6),
-                    "vibration": base_vib * (1 + severity * 0.5) + random.gauss(0, 0.4),
-                    "pressure": base_press * (1 - severity * 0.4) + random.gauss(0, 0.6),
-                    "powerConsumption": base_power * (1 + severity * 0.4),
+                    # Display and ML values
+                    "temperature": temp,
+                    "vibration": vib,
+                    "pressure": press,
+                    "powerConsumption": power,
 
-                    # ✅ NEW: Raw values for ML (no degradation, less noise)
-                    "raw_op1": base_power,
-                    "raw_op2": base_press,
-                    "raw_s1": base_temp + random.gauss(0, 3),
-                    "raw_s2": base_vib + random.gauss(0, 0.2),
-                    "raw_s3": base_press + random.gauss(0, 0.3),
+                    # Raw values for ML (same as display)
+                    "raw_s1": temp,
+                    "raw_s2": vib,
+                    "raw_s3": press,
+                    "raw_op1": power,
                 })
 
     return {

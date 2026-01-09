@@ -21,7 +21,7 @@ from ml.milling_predict import predict_milling
 from ml.turbofan_predict import predict_turbofan
 from api.utils.timeseries_features import window_features
 from api.utils.timeseries_features import build_named_window
-
+from api.services.data_parser import parse_uploaded_file, extract_sensor_data, prepare_ml_features
 
 # Helper function to get the list of the machines
 def machine_list(request):
@@ -74,11 +74,11 @@ def check_and_send_alert(user, machine_id, machine_name, prediction_result):
     ).exists()
 
     if recent_alert:
-        print(f"⏳ SKIPPING email for {machine_name}: Already sent in last hour.")
+        print(f"SKIPPING email for {machine_name}: Already sent in last hour.")
         return
 
     # 4. Create Alert & Send Email
-    print(f"📧 Sending CRITICAL alert for {machine_name}...")
+    print(f"Sending CRITICAL alert for {machine_name}...")
     
     Alert.objects.create(
         machine=machine_obj,
@@ -96,7 +96,7 @@ def check_and_send_alert(user, machine_id, machine_name, prediction_result):
             fail_silently=True # Set to True for production so it doesn't crash the app if email fails
         )
     except Exception as e:
-        print(f"❌ Email sending failed: {e}")
+        print(f"Email sending failed: {e}")
 
 
 @api_view(["GET"])
@@ -299,25 +299,29 @@ def air_compressor_prediction(request):
         WINDOW = 24
         recent = rows[-WINDOW:]
 
-        temps = [r["temperature"] for r in recent if r.get("temperature") is not None]
-        vibs = [r["vibration"] for r in recent if r.get("vibration") is not None]
-        press = [r["pressure"] for r in recent if r.get("pressure") is not None]
+        # Use raw values from synthetic data (matches training data scale)
+        temps = [r.get("raw_outlet_temp", r["temperature"]) for r in recent]
+        vibs = [r.get("raw_haccz", r["vibration"]) for r in recent]
+        press = [r.get("raw_outlet_pressure_bar", r["pressure"]) for r in recent]
+        powers = [r.get("raw_motor_power", r.get("powerConsumption", 0)) for r in recent]
 
         t_feat = window_features(temps)
         v_feat = window_features(vibs)
         p_feat = window_features(press)
 
         mapped = {
-            "motor_power": sum(r.get("powerConsumption", 0) for r in recent) / len(recent),
-            "outlet_temp": t_feat["mean"],
-            "haccz": v_feat["std"],
-            "outlet_pressure_bar": p_feat["mean"] / 14.5038,
+            "temperature": t_feat["mean"],
+            "vibration": v_feat["mean"],
+            "pressure": p_feat["mean"],
+            "power": sum(powers) / len(powers) if powers else 0.0,
         }
 
-        pred = predict_air_compressor(mapped)
-        
-        # --- NEW: Check for Alert ---
-        check_and_send_alert(request.user, ac["id"], ac["name"], pred)
+        try:
+            pred = predict_air_compressor(mapped)
+            check_and_send_alert(request.user, ac["id"], ac["name"], pred)
+        except Exception as e:
+            print("AIR COMPRESSOR PREDICT FAILED:", ac["id"], repr(e))
+            continue
 
         results.append({
             "equipmentId": ac["id"],
@@ -352,49 +356,28 @@ def milling_prediction(request):
         WINDOW = 24
         recent = rows[-WINDOW:]
 
+        # Use display values (already converted to standard scale in synthetic.py)
         temps = [r["temperature"] for r in recent if r.get("temperature") is not None]
         vibs = [r["vibration"] for r in recent if r.get("vibration") is not None]
         press = [r["pressure"] for r in recent if r.get("pressure") is not None]
+        powers = [r.get("powerConsumption", 0) for r in recent]
 
-        mapped = {}
+        t_feat = window_features(temps)
+        v_feat = window_features(vibs)
+        p_feat = window_features(press)
 
-        mapped.update(build_named_window(
-            [t + 273.15 for t in temps],
-            "Air temperature [K]"
-        ))
-
-        mapped.update(build_named_window(
-            [t + 273.15 for t in temps],
-            "Process temperature [K]"
-        ))
-
-        mapped.update(build_named_window(
-            [p * 30.0 for p in press],
-            "Rotational speed [rpm]"
-        ))
-
-        mapped.update(build_named_window(
-            [v * 20.0 for v in vibs],
-            "Torque [Nm]"
-        ))
-
-        mapped.update(build_named_window(
-            [r.get("powerConsumption", 0.0) for r in recent],
-            "Tool wear [min]"
-        ))
-
-        mapped["Type"] = "M"
-
-        
+        mapped = {
+            "temperature": t_feat["mean"],
+            "vibration": v_feat["mean"],
+            "pressure": p_feat["mean"],
+            "power": sum(powers) / len(powers) if powers else 0.0,
+        }
 
         try:
             pred = predict_milling(mapped)
-            # --- NEW: Check for Alert ---
             check_and_send_alert(request.user, cnc["id"], cnc["name"], pred)
         except Exception as e:
-            print("❌ MILLING PREDICT FAILED")
-            print("Machine:", cnc["id"])
-            print("Exception:", repr(e))
+            print("MILLING PREDICT FAILED:", cnc["id"], repr(e))
             continue
 
         results.append({
@@ -427,27 +410,31 @@ def turbofan_prediction(request):
         if not rows:
             continue
 
-        latest = rows[-1]
+        WINDOW = 24
+        recent = rows[-WINDOW:]
+
+        # Use raw values for turbofan (matches training data scale)
+        temps = [r.get("raw_s1", r["temperature"]) for r in recent]
+        vibs = [r.get("raw_s2", r["vibration"]) for r in recent]
+        press = [r.get("raw_s3", r["pressure"]) for r in recent]
+        powers = [r.get("raw_op1", r.get("powerConsumption", 0)) for r in recent]
+
+        t_feat = window_features(temps)
+        v_feat = window_features(vibs)
+        p_feat = window_features(press)
 
         mapped = {
-            "op1": latest.get("powerConsumption", 0.0),
-            "op2": latest.get("pressure", 0.0),
-            "op3": 0.0,
-            "s1": latest.get("temperature", 0.0),
-            "s2": latest.get("vibration", 0.0),
-            "s3": latest.get("pressure", 0.0),
+            "temperature": t_feat["mean"],
+            "vibration": v_feat["mean"],
+            "pressure": p_feat["mean"],
+            "power": sum(powers) / len(powers) if powers else 0.0,
         }
 
         try:
             pred = predict_turbofan(mapped)
-            
-            # --- NEW: Check for Alert ---
             check_and_send_alert(request.user, te["id"], te["name"], pred)
-            
         except Exception as e:
-            print("❌ TURBOFAN PREDICT FAILED")
-            print("Machine:", te["id"])
-            print("Exception:", repr(e))
+            print("TURBOFAN PREDICT FAILED:", te["id"], repr(e))
             continue
 
         results.append({
@@ -457,3 +444,140 @@ def turbofan_prediction(request):
         })
 
     return Response(results)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def add_machine_with_data(request):
+    """
+    Add a new machine with uploaded data log file.
+    Accepts multipart form data with:
+    - name: machine name
+    - type_id: machine type (AC, CNC, TE)
+    - data_file: CSV or JSON file with sensor readings
+    """
+    name = request.data.get("name")
+    type_id = request.data.get("type_id")
+    data_file = request.FILES.get("data_file")
+
+    if not name or not type_id:
+        return Response({"detail": "Name and type_id are required"}, status=400)
+
+    if not data_file:
+        return Response({"detail": "data_file is required"}, status=400)
+
+    m_type = get_object_or_404(MachineType, pk=type_id)
+
+    # Parse the uploaded file
+    try:
+        file_content = data_file.read().decode("utf-8")
+        df = parse_uploaded_file(file_content, data_file.name)
+    except Exception as e:
+        return Response({"detail": f"Failed to parse file: {str(e)}"}, status=400)
+
+    if df.empty:
+        return Response({"detail": "Uploaded file contains no data"}, status=400)
+
+    # Extract sensor data
+    try:
+        sensor_rows = extract_sensor_data(df, type_id)
+    except Exception as e:
+        return Response({"detail": f"Failed to extract sensor data: {str(e)}"}, status=400)
+
+    # Prepare ML features and run prediction
+    try:
+        features = prepare_ml_features(sensor_rows, type_id)
+        
+        if type_id == "AC":
+            prediction = predict_air_compressor(features)
+        elif type_id == "CNC":
+            prediction = predict_milling(features)
+        elif type_id == "TE":
+            prediction = predict_turbofan(features)
+        else:
+            prediction = {"probFailure": 0.0, "riskLevel": "unknown", "confidence": 0.0}
+    except Exception as e:
+        return Response({"detail": f"ML prediction failed: {str(e)}"}, status=400)
+
+    # Create the machine
+    machine = Machine.objects.create(type=m_type, name=name)
+    UserMachine.objects.create(user=request.user, machine=machine, nickname=name, is_tracking=True)
+
+    # Check for alerts
+    check_and_send_alert(request.user, machine.machine_id, name, prediction)
+
+    return Response({
+        "id": machine.machine_id,
+        "name": machine.name,
+        "type": machine.type.name,
+        "prediction": prediction,
+        "dataRowsProcessed": len(sensor_rows),
+    }, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def predict_from_upload(request, machine_id):
+    """
+    Run prediction on an existing machine using uploaded data log.
+    Accepts multipart form data with:
+    - data_file: CSV or JSON file with sensor readings
+    """
+    data_file = request.FILES.get("data_file")
+
+    if not data_file:
+        return Response({"detail": "data_file is required"}, status=400)
+
+    # Verify machine exists and user has access
+    try:
+        user_machine = UserMachine.objects.select_related('machine', 'machine__type').get(
+            user=request.user,
+            machine__machine_id=machine_id
+        )
+    except UserMachine.DoesNotExist:
+        return Response({"detail": "Machine not found or not tracked by you"}, status=404)
+
+    machine = user_machine.machine
+    type_id = machine.type.type_id
+
+    # Parse the uploaded file
+    try:
+        file_content = data_file.read().decode("utf-8")
+        df = parse_uploaded_file(file_content, data_file.name)
+    except Exception as e:
+        return Response({"detail": f"Failed to parse file: {str(e)}"}, status=400)
+
+    if df.empty:
+        return Response({"detail": "Uploaded file contains no data"}, status=400)
+
+    # Extract sensor data
+    try:
+        sensor_rows = extract_sensor_data(df, type_id)
+    except Exception as e:
+        return Response({"detail": f"Failed to extract sensor data: {str(e)}"}, status=400)
+
+    # Prepare ML features and run prediction
+    try:
+        features = prepare_ml_features(sensor_rows, type_id)
+        
+        if type_id == "AC":
+            prediction = predict_air_compressor(features)
+        elif type_id == "CNC":
+            prediction = predict_milling(features)
+        elif type_id == "TE":
+            prediction = predict_turbofan(features)
+        else:
+            prediction = {"probFailure": 0.0, "riskLevel": "unknown", "confidence": 0.0}
+    except Exception as e:
+        return Response({"detail": f"ML prediction failed: {str(e)}"}, status=400)
+
+    # Check for alerts
+    check_and_send_alert(request.user, machine.machine_id, machine.name, prediction)
+
+    return Response({
+        "equipmentId": machine.machine_id,
+        "equipmentName": machine.name,
+        "type": type_id,
+        "dataRowsProcessed": len(sensor_rows),
+        **prediction,
+    })

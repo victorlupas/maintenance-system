@@ -20,6 +20,8 @@ import {
   Plus,
   X,
   Trash2,
+  Upload,
+  FileText,
 } from "lucide-react";
 import { api } from "../apiClient";
 import { useNavigate } from "react-router-dom";
@@ -45,6 +47,8 @@ const PredictiveMaintenanceSystem = () => {
   const [newMachineName, setNewMachineName] = useState("");
   const [selectedTypeId, setSelectedTypeId] = useState("");
   const [isAdding, setIsAdding] = useState(false);
+  const [dataFile, setDataFile] = useState(null);
+  const [uploadResult, setUploadResult] = useState(null);
 
   // ML predictions from backend (per equipmentId)
   const [mlPredictions, setMlPredictions] = useState({});
@@ -205,6 +209,8 @@ const PredictiveMaintenanceSystem = () => {
   const closeAddModal = () => {
     setIsAddModalOpen(false);
     setNewMachineName("");
+    setDataFile(null);
+    setUploadResult(null);
   };
 
   const handleAddMachine = async (e) => {
@@ -212,23 +218,75 @@ const PredictiveMaintenanceSystem = () => {
     if (!newMachineName || !selectedTypeId) return;
 
     setIsAdding(true);
+    setUploadResult(null);
+
     try {
-      await api.post("/api/machines/add/", {
-        name: newMachineName,
-        type_id: selectedTypeId,
-      });
+      let result;
+
+      if (dataFile) {
+        // Use file upload endpoint
+        const formData = new FormData();
+        formData.append("name", newMachineName);
+        formData.append("type_id", selectedTypeId);
+        formData.append("data_file", dataFile);
+
+        const res = await api.post("/api/machines/add-with-data/", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        result = res.data;
+
+        // Show prediction result
+        setUploadResult(result);
+
+        // Update ML predictions with the new result
+        if (result.prediction && result.id) {
+          setMlPredictions((prev) => ({
+            ...prev,
+            [result.id]: {
+              equipmentId: result.id,
+              equipmentName: result.name,
+              ...result.prediction,
+            },
+          }));
+        }
+      } else {
+        // Use regular endpoint (synthetic data)
+        await api.post("/api/machines/add/", {
+          name: newMachineName,
+          type_id: selectedTypeId,
+        });
+      }
 
       await fetchSyntheticData();
       fetchAirCompressorPrediction();
       fetchMillingPrediction();
       fetchTurbofanPrediction();
 
-      closeAddModal();
+      // Only close if no file was uploaded (so user can see results)
+      if (!dataFile) {
+        closeAddModal();
+      }
     } catch (error) {
       console.error("Failed to add machine", error);
-      alert("Failed to add machine. Please try again.");
+      const detail = error.response?.data?.detail || "Failed to add machine. Please try again.";
+      alert(detail);
     } finally {
       setIsAdding(false);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const validTypes = [".csv", ".json"];
+      const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+      if (!validTypes.includes(ext)) {
+        alert("Please upload a CSV or JSON file.");
+        e.target.value = "";
+        return;
+      }
+      setDataFile(file);
+      setUploadResult(null);
     }
   };
 
@@ -610,19 +668,122 @@ const PredictiveMaintenanceSystem = () => {
                     ))}
                   </select>
                   <p className="text-xs text-gray-500 mt-1">
-                    Select the model to simulate appropriate sensor behavior.
+                    Select the machine type for prediction model.
                   </p>
                 </div>
 
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    disabled={isAdding}
-                    className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-400"
-                  >
-                    {isAdding ? "Adding..." : "Add Machine"}
-                  </button>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Data Log File (Optional)
+                  </label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-green-500 transition-colors">
+                    <input
+                      type="file"
+                      accept=".csv,.json"
+                      onChange={handleFileChange}
+                      className="hidden"
+                      id="data-file-input"
+                    />
+                    <label
+                      htmlFor="data-file-input"
+                      className="cursor-pointer flex flex-col items-center gap-2"
+                    >
+                      {dataFile ? (
+                        <>
+                          <FileText className="text-green-600" size={32} />
+                          <span className="text-sm font-medium text-gray-900">
+                            {dataFile.name}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {(dataFile.size / 1024).toFixed(1)} KB
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="text-gray-400" size={32} />
+                          <span className="text-sm text-gray-600">
+                            Click to upload CSV or JSON
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            Sensor data log for ML prediction
+                          </span>
+                        </>
+                      )}
+                    </label>
+                  </div>
+                  {dataFile && (
+                    <button
+                      type="button"
+                      onClick={() => setDataFile(null)}
+                      className="mt-2 text-xs text-red-600 hover:underline"
+                    >
+                      Remove file
+                    </button>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    Upload sensor data to get real predictions. Without a file, synthetic data will be used.
+                  </p>
                 </div>
+
+                {uploadResult && (
+                  <div className="bg-gray-50 border rounded-lg p-4">
+                    <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                      <CheckCircle className="text-green-600" size={18} />
+                      Machine Added Successfully
+                    </h3>
+                    <div className="space-y-1 text-sm">
+                      <p><span className="text-gray-600">ID:</span> {uploadResult.id}</p>
+                      <p><span className="text-gray-600">Rows Processed:</span> {uploadResult.dataRowsProcessed}</p>
+                      <div className="pt-2 border-t mt-2">
+                        <p className="font-medium text-gray-900">Prediction Result:</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-medium ${
+                              uploadResult.prediction?.riskLevel === "critical"
+                                ? "bg-red-100 text-red-800"
+                                : uploadResult.prediction?.riskLevel === "medium"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-green-100 text-green-800"
+                            }`}
+                          >
+                            {uploadResult.prediction?.riskLevel?.toUpperCase()}
+                          </span>
+                          <span className="text-gray-900">
+                            {((uploadResult.prediction?.probFailure || 0) * 100).toFixed(1)}% failure probability
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeAddModal}
+                      className="mt-3 w-full bg-gray-200 text-gray-800 py-2 rounded-lg font-medium hover:bg-gray-300"
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
+
+                {!uploadResult && (
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={isAdding}
+                      className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-400 flex items-center justify-center gap-2"
+                    >
+                      {isAdding ? (
+                        "Processing..."
+                      ) : dataFile ? (
+                        <>
+                          <Upload size={18} />
+                          Add Machine & Analyze Data
+                        </>
+                      ) : (
+                        "Add Machine"
+                      )}
+                    </button>
+                  </div>
+                )}
               </form>
             </div>
           </div>
