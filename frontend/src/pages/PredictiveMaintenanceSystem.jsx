@@ -22,6 +22,8 @@ import {
   Trash2,
   Upload,
   FileText,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { api } from "../apiClient";
 import { useNavigate } from "react-router-dom";
@@ -63,6 +65,17 @@ const PredictiveMaintenanceSystem = () => {
     vibration: { warning: 3.5, critical: 4.5 },
     pressure: { warning: 95, critical: 110 },
   });
+
+  // Dark mode state
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem("darkMode");
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  // Persist dark mode preference
+  useEffect(() => {
+    localStorage.setItem("darkMode", JSON.stringify(darkMode));
+  }, [darkMode]);
 
   // ----------------------------
   // Auth helpers
@@ -561,31 +574,42 @@ const PredictiveMaintenanceSystem = () => {
     [alerts]
   );
 
+  // Theme classes
+  const theme = {
+    bg: darkMode ? "bg-gray-800" : "bg-gray-50",
+    card: darkMode ? "bg-gray-700" : "bg-white",
+    text: darkMode ? "text-gray-100" : "text-gray-900",
+    textMuted: darkMode ? "text-gray-300" : "text-gray-600",
+    border: darkMode ? "border-gray-600" : "border-gray-200",
+    input: darkMode ? "bg-gray-600 border-gray-500 text-gray-100" : "bg-white border-gray-300",
+    hover: darkMode ? "hover:bg-gray-600" : "hover:bg-gray-50",
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className={`min-h-screen ${theme.bg} p-6 transition-colors duration-200`}>
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className={`${theme.card} rounded-lg shadow-md p-6 mb-6 transition-colors duration-200`}>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">
+              <h1 className={`text-3xl font-bold ${theme.text}`}>
                 SME Predictive Maintenance System
               </h1>
-              <p className="text-gray-600 mt-2">
+              <p className={`${theme.textMuted} mt-2`}>
                 AI-powered equipment monitoring and failure prediction
               </p>
 
               <div className="mt-2 flex items-center gap-3">
                 {me?.username ? (
-                  <p className="text-sm text-gray-700">
+                  <p className={`text-sm ${theme.textMuted}`}>
                     Logged in as <span className="font-semibold">{me.username}</span>
                   </p>
                 ) : (
-                  <p className="text-sm text-gray-500">Logged in</p>
+                  <p className={`text-sm ${theme.textMuted}`}>Logged in</p>
                 )}
                 <button
                   onClick={onLogout}
-                  className="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded border hover:bg-gray-50"
+                  className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded border ${theme.border} ${theme.text} ${theme.hover}`}
                   title="Logout"
                 >
                   <LogOut size={16} /> Logout
@@ -596,6 +620,13 @@ const PredictiveMaintenanceSystem = () => {
             </div>
 
             <div className="flex gap-2">
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className={`${theme.card} ${theme.text} px-3 py-3 rounded-lg ${theme.hover} border ${theme.border} transition-colors`}
+                title={darkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              >
+                {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+              </button>
               <button
                 onClick={openAddModal}
                 className="bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 flex items-center gap-2"
@@ -732,8 +763,13 @@ const PredictiveMaintenanceSystem = () => {
                       Machine Added Successfully
                     </h3>
                     <div className="space-y-1 text-sm">
-                      <p><span className="text-gray-600">ID:</span> {uploadResult.id}</p>
-                      <p><span className="text-gray-600">Rows Processed:</span> {uploadResult.dataRowsProcessed}</p>
+                      <p>
+                        <span className="text-gray-600">ID:</span> {uploadResult.id}
+                      </p>
+                      <p>
+                        <span className="text-gray-600">Rows Processed:</span>{" "}
+                        {uploadResult.dataRowsProcessed}
+                      </p>
                       <div className="pt-2 border-t mt-2">
                         <p className="font-medium text-gray-900">Prediction Result:</p>
                         <div className="flex items-center gap-2 mt-1">
@@ -790,9 +826,9 @@ const PredictiveMaintenanceSystem = () => {
         )}
 
         {/* Navigation Tabs */}
-        <div className="bg-white rounded-lg shadow-md mb-6">
-          <div className="flex border-b overflow-x-auto">
-            {["dashboard", "equipment", "anomalies", "predictions", "alerts", "settings"].map(
+        <div className={`${theme.card} rounded-lg shadow-md mb-6 transition-colors duration-200`}>
+          <div className={`flex border-b ${theme.border} overflow-x-auto`}>
+            {["dashboard", "equipment", "predictions", "alerts", "settings"].map(
               (tab) => (
                 <button
                   key={tab}
@@ -800,7 +836,7 @@ const PredictiveMaintenanceSystem = () => {
                   className={`px-6 py-3 font-medium capitalize whitespace-nowrap ${
                     activeTab === tab
                       ? "border-b-2 border-blue-600 text-blue-600"
-                      : "text-gray-600 hover:text-gray-900"
+                      : `${theme.textMuted} hover:text-blue-500`
                   }`}
                 >
                   {tab}
@@ -815,30 +851,30 @@ const PredictiveMaintenanceSystem = () => {
           <div className="space-y-6">
             {/* KPI Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Total Equipment</p>
-                    <p className="text-3xl font-bold text-gray-900">{equipment.length}</p>
+                    <p className={`${theme.textMuted} text-sm`}>Total Equipment</p>
+                    <p className={`text-3xl font-bold ${theme.text}`}>{equipment.length}</p>
                   </div>
                   <Activity className="text-blue-600" size={32} />
                 </div>
               </div>
 
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Active Alerts</p>
+                    <p className={`${theme.textMuted} text-sm`}>Active Alerts</p>
                     <p className="text-3xl font-bold text-red-600">{activeAlertsCount}</p>
                   </div>
                   <AlertTriangle className="text-red-600" size={32} />
                 </div>
               </div>
 
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Critical Risks</p>
+                    <p className={`${theme.textMuted} text-sm`}>Critical Risks</p>
                     <p className="text-3xl font-bold text-orange-600">
                       {predictions.filter((p) => p.riskLevel === "critical").length}
                     </p>
@@ -847,10 +883,10 @@ const PredictiveMaintenanceSystem = () => {
                 </div>
               </div>
 
-              <div className="bg-white rounded-lg shadow-md p-6">
+              <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm">Anomalies Detected</p>
+                    <p className={`${theme.textMuted} text-sm`}>Anomalies Detected</p>
                     <p className="text-3xl font-bold text-yellow-600">{anomalies.length}</p>
                   </div>
                   <AlertTriangle className="text-yellow-600" size={32} />
@@ -859,13 +895,13 @@ const PredictiveMaintenanceSystem = () => {
             </div>
 
             {/* Equipment Status Overview */}
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">
+            <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
+              <h2 className={`text-xl font-bold ${theme.text} mb-4`}>
                 Equipment Health Status
               </h2>
 
               {equipment.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
+                <div className={`text-center py-12 ${theme.textMuted}`}>
                   <p>No equipment loaded yet.</p>
                   <button onClick={openAddModal} className="text-green-600 font-medium hover:underline mt-2">
                     Add your first machine
@@ -880,9 +916,9 @@ const PredictiveMaintenanceSystem = () => {
                       const ml = mlPredictions[eq.id];
 
                       return (
-                        <div key={eq.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow relative group">
+                        <div key={eq.id} className={`border ${theme.border} rounded-lg p-4 hover:shadow-md transition-shadow relative group ${darkMode ? 'bg-gray-600' : ''}`}>
                           <div className="flex items-center justify-between mb-2">
-                            <h3 className="font-semibold text-gray-900">{eq.name}</h3>
+                            <h3 className={`font-semibold ${theme.text}`}>{eq.name}</h3>
 
                             <div className="flex items-center gap-2">
                               <span
@@ -910,29 +946,29 @@ const PredictiveMaintenanceSystem = () => {
                             </div>
                           </div>
 
-                          <p className="text-xs text-gray-500">ID: {eq.id}</p>
-                          <p className="text-xs text-gray-500">Type: {eq.type}</p>
-                          <p className="text-xs text-gray-500">
+                          <p className={`text-xs ${theme.textMuted}`}>ID: {eq.id}</p>
+                          <p className={`text-xs ${theme.textMuted}`}>Type: {eq.type}</p>
+                          <p className={`text-xs ${theme.textMuted}`}>
                             Added: {eq.dateAdded ? formatDate(eq.dateAdded) : "—"}
                           </p>
 
                           {ml ? (
                             <div className="mt-3 space-y-2">
                               <div className="flex justify-between items-center">
-                                <span className="text-xs text-gray-600">Failure Probability:</span>
-                                <span className="text-sm font-bold text-gray-900">
+                                <span className={`text-xs ${theme.textMuted}`}>Failure Probability:</span>
+                                <span className={`text-sm font-bold ${theme.text}`}>
                                   {(ml.probFailure * 100).toFixed(1)}%
                                 </span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-xs text-gray-600">Confidence:</span>
-                                <span className="text-sm font-bold text-gray-900">
+                                <span className={`text-xs ${theme.textMuted}`}>Confidence:</span>
+                                <span className={`text-sm font-bold ${theme.text}`}>
                                   {(ml.confidence * 100).toFixed(0)}%
                                 </span>
                               </div>
                               {pred && (
-                                <div className="flex justify-between items-center pt-2 border-t">
-                                  <span className="text-xs text-gray-600">Est. Failure:</span>
+                                <div className={`flex justify-between items-center pt-2 border-t ${theme.border}`}>
+                                  <span className={`text-xs ${theme.textMuted}`}>Est. Failure:</span>
                                   <span className="text-sm font-bold text-blue-600">
                                     {pred.daysToFailure} days
                                   </span>
@@ -941,7 +977,7 @@ const PredictiveMaintenanceSystem = () => {
                             </div>
                           ) : (
                             <div className="mt-3 text-center py-2">
-                              <p className="text-xs text-gray-500">
+                              <p className={`text-xs ${theme.textMuted}`}>
                                 No ML predictions available
                               </p>
                             </div>
@@ -961,9 +997,9 @@ const PredictiveMaintenanceSystem = () => {
             {equipment.map((eq) => {
               const chartData = getChartData(eq.id);
               return (
-                <div key={eq.id} className="bg-white rounded-lg shadow-md p-6">
-                  <h2 className="text-xl font-bold text-gray-900 mb-4">
-                    {eq.name} <span className="text-gray-400 text-sm">({eq.id})</span>
+                <div key={eq.id} className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
+                  <h2 className={`text-xl font-bold ${theme.text} mb-4`}>
+                    {eq.name} <span className={theme.textMuted}>({eq.id})</span>
                   </h2>
 
                   <ResponsiveContainer width="100%" height={300}>
@@ -1059,9 +1095,9 @@ const PredictiveMaintenanceSystem = () => {
 
         {/* Predictions Tab */}
         {activeTab === "predictions" && (
-          <div className="bg-white rounded-lg shadow-md p-6">
+          <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-gray-900">
+              <h2 className={`text-xl font-bold ${theme.text}`}>
                 Failure Predictions & Recommendations
               </h2>
               <button
@@ -1078,13 +1114,13 @@ const PredictiveMaintenanceSystem = () => {
                 .slice()
                 .sort((a, b) => a.daysToFailure - b.daysToFailure)
                 .map((pred, idx) => (
-                  <div key={idx} className="border rounded-lg p-6">
+                  <div key={idx} className={`border ${theme.border} rounded-lg p-6 ${darkMode ? 'bg-gray-600' : ''}`}>
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-gray-900">
+                        <h3 className={`text-lg font-semibold ${theme.text}`}>
                           {pred.equipmentName}
                         </h3>
-                        <p className="text-sm text-gray-600">{pred.equipmentId}</p>
+                        <p className={`text-sm ${theme.textMuted}`}>{pred.equipmentId}</p>
                       </div>
                       <span
                         className={`px-3 py-1 rounded font-medium ${
@@ -1101,37 +1137,37 @@ const PredictiveMaintenanceSystem = () => {
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                       <div>
-                        <p className="text-sm text-gray-600">Est. Time to Failure</p>
-                        <p className="text-2xl font-bold text-gray-900">
+                        <p className={`text-sm ${theme.textMuted}`}>Est. Time to Failure</p>
+                        <p className={`text-2xl font-bold ${theme.text}`}>
                           {pred.daysToFailure} days
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-gray-600">Confidence</p>
-                        <p className="text-2xl font-bold text-gray-900">
+                        <p className={`text-sm ${theme.textMuted}`}>Confidence</p>
+                        <p className={`text-2xl font-bold ${theme.text}`}>
                           {(pred.confidence * 100).toFixed(0)}%
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-gray-600">Est. Maintenance Cost</p>
-                        <p className="text-2xl font-bold text-gray-900">
+                        <p className={`text-sm ${theme.textMuted}`}>Est. Maintenance Cost</p>
+                        <p className={`text-2xl font-bold ${theme.text}`}>
                           ${pred.estimatedCost.toFixed(0)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-gray-600">Potential Savings</p>
-                        <p className="text-2xl font-bold text-green-600">
+                        <p className={`text-sm ${theme.textMuted}`}>Potential Savings</p>
+                        <p className={`text-2xl font-bold ${theme.text}`}>
                           {pred.potentialSavings}%
                         </p>
                       </div>
                     </div>
 
                     <div className="mb-4">
-                      <p className="text-sm font-medium text-gray-700 mb-2">
+                      <p className={`text-sm font-medium ${theme.textMuted} mb-2`}>
                         Sensor Trends:
                       </p>
                       <div className="flex gap-4">
-                        <span className="text-sm">
+                        <span className={`text-sm ${theme.textMuted}`}>
                           Temp:{" "}
                           <span
                             className={
@@ -1189,21 +1225,21 @@ const PredictiveMaintenanceSystem = () => {
 
         {/* Alerts Tab */}
         {activeTab === "alerts" && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Active Alerts</h2>
+          <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
+            <h2 className={`text-xl font-bold ${theme.text} mb-4`}>Active Alerts</h2>
 
             <div className="space-y-3">
               {alerts.length === 0 ? (
                 <div className="text-center py-12">
                   <CheckCircle className="mx-auto text-green-600 mb-2" size={48} />
-                  <p className="text-gray-600">No active alerts</p>
+                  <p className={theme.textMuted}>No active alerts</p>
                 </div>
               ) : (
                 alerts.map((alert) => (
                   <div
                     key={alert.id}
-                    className={`border rounded-lg p-4 ${
-                      alert.acknowledged ? "bg-gray-50 opacity-60" : ""
+                    className={`border ${theme.border} rounded-lg p-4 ${
+                      alert.acknowledged ? (darkMode ? "bg-gray-700 opacity-60" : "bg-gray-50 opacity-60") : (darkMode ? "bg-gray-600" : "")
                     }`}
                   >
                     <div className="flex items-start justify-between">
@@ -1218,7 +1254,7 @@ const PredictiveMaintenanceSystem = () => {
                           >
                             {alert.severity.toUpperCase()}
                           </span>
-                          <span className="font-semibold">{alert.equipmentName}</span>
+                          <span className={`font-semibold ${theme.text}`}>{alert.equipmentName}</span>
                           {alert.acknowledged && (
                             <span className="text-xs text-green-600 font-medium">
                               ✓ Acknowledged
@@ -1226,10 +1262,10 @@ const PredictiveMaintenanceSystem = () => {
                           )}
                         </div>
 
-                        <p className="text-sm text-gray-600 mb-2">
+                        <p className={`text-sm ${theme.textMuted} mb-2`}>
                           {new Date(alert.timestamp).toLocaleString()}
                         </p>
-                        <p className="text-gray-700">{alert.message}</p>
+                        <p className={theme.text}>{alert.message}</p>
                       </div>
 
                       {!alert.acknowledged && (
@@ -1250,22 +1286,22 @@ const PredictiveMaintenanceSystem = () => {
 
         {/* Settings Tab */}
         {activeTab === "settings" && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-6">Threshold Configuration</h2>
+          <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
+            <h2 className={`text-xl font-bold ${theme.text} mb-6`}>Threshold Configuration</h2>
 
-            <p className="text-sm text-gray-600 mb-4">
+            <p className={`text-sm ${theme.textMuted} mb-4`}>
               Note: thresholds are currently only UI placeholders. Anomaly detection now uses
               per-machine z-score baselines.
             </p>
 
             <div className="space-y-6">
               {Object.entries(thresholds).map(([sensor, values]) => (
-                <div key={sensor} className="border rounded-lg p-4">
-                  <h3 className="font-semibold text-gray-900 mb-4 capitalize">{sensor}</h3>
+                <div key={sensor} className={`border ${theme.border} rounded-lg p-4 ${darkMode ? 'bg-gray-600' : ''}`}>
+                  <h3 className={`font-semibold ${theme.text} mb-4 capitalize`}>{sensor}</h3>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className={`block text-sm font-medium ${theme.textMuted} mb-2`}>
                         Warning Threshold
                       </label>
                       <input
@@ -1280,12 +1316,12 @@ const PredictiveMaintenanceSystem = () => {
                             },
                           }))
                         }
-                        className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
+                        className={`w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 ${theme.input}`}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className={`block text-sm font-medium ${theme.textMuted} mb-2`}>
                         Critical Threshold
                       </label>
                       <input
@@ -1300,7 +1336,7 @@ const PredictiveMaintenanceSystem = () => {
                             },
                           }))
                         }
-                        className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
+                        className={`w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 ${theme.input}`}
                       />
                     </div>
                   </div>
