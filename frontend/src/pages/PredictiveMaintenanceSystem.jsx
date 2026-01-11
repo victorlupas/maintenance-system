@@ -8,6 +8,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  ReferenceArea,
 } from "recharts";
 import {
   AlertTriangle,
@@ -24,6 +25,10 @@ import {
   FileText,
   Moon,
   Sun,
+  Settings,
+  ChevronDown,
+  ChevronUp,
+  Radio,
 } from "lucide-react";
 import { api } from "../apiClient";
 import { useNavigate } from "react-router-dom";
@@ -55,16 +60,95 @@ const PredictiveMaintenanceSystem = () => {
   // ML predictions from backend (per equipmentId)
   const [mlPredictions, setMlPredictions] = useState({});
 
+  // Accumulated sensor history per machine (for graphs)
+  const [sensorHistory, setSensorHistory] = useState({});
+
+  // Auto-simulation state
+  const [autoSimEnabled, setAutoSimEnabled] = useState(true);
+  const AUTO_SIM_INTERVAL = 10000; // 10 seconds
+  const MAX_HISTORY_POINTS = 50; // Keep last 50 data points per machine
+
   // Auth UI
   const [me, setMe] = useState(null);
   const navigate = useNavigate();
 
-  // thresholds kept for Settings UI
-  const [thresholds, setThresholds] = useState({
-    temperature: { warning: 75, critical: 85 },
-    vibration: { warning: 3.5, critical: 4.5 },
-    pressure: { warning: 95, critical: 110 },
-  });
+  // Machine-type-specific default thresholds based on actual sensor value ranges
+  // Values derived from backend synthetic data generation ranges
+  const thresholdsByType = {
+    // Air Compressor: healthy 95-145°C temp, 2.0-5.5 vib, 1.5-7.5 pressure
+    AC: {
+      temperature: { warning: 130, critical: 145 },
+      vibration: { warning: 4.5, critical: 5.5 },
+      pressure: { warning: 6.0, critical: 7.5 },
+    },
+    // CNC Milling Machine: healthy 35-42°C temp, 1.5-3.5 vib, 40-50 pressure
+    CNC: {
+      temperature: { warning: 40, critical: 42 },
+      vibration: { warning: 3.0, critical: 3.5 },
+      pressure: { warning: 42, critical: 40 }, // Note: lower pressure = worse for CNC
+    },
+    // Turbofan Engine: healthy 600-680°C temp, 1.0-5.0 vib, 22-30 pressure
+    TE: {
+      temperature: { warning: 660, critical: 680 },
+      vibration: { warning: 4.0, critical: 5.0 },
+      pressure: { warning: 24, critical: 22 }, // Note: lower pressure = worse for turbofan
+    },
+    // Generic fallback for unknown types
+    default: {
+      temperature: { warning: 85, critical: 95 },
+      vibration: { warning: 5.0, critical: 6.5 },
+      pressure: { warning: 115, critical: 130 },
+    },
+  };
+
+  // Per-machine thresholds (keyed by machine ID)
+  const [machineThresholds, setMachineThresholds] = useState({});
+
+  // Get default thresholds based on machine type
+  const getDefaultThresholds = (machineType) => {
+    return thresholdsByType[machineType] || thresholdsByType.default;
+  };
+
+  // Get thresholds for a specific machine (with type-specific defaults)
+  const getThresholds = (machineId) => {
+    if (machineThresholds[machineId]) {
+      return machineThresholds[machineId];
+    }
+    // Find the machine to get its type
+    const machine = equipment.find((eq) => eq.id === machineId);
+    const machineType = machine?.type || 'default';
+    return getDefaultThresholds(machineType);
+  };
+
+  // Update threshold for a specific machine
+  const updateMachineThreshold = (machineId, sensor, type, value) => {
+    setMachineThresholds((prev) => {
+      // Get machine type to use proper defaults
+      const machine = equipment.find((eq) => eq.id === machineId);
+      const machineType = machine?.type || 'default';
+      const current = prev[machineId] || getDefaultThresholds(machineType);
+      return {
+        ...prev,
+        [machineId]: {
+          ...current,
+          [sensor]: {
+            ...current[sensor],
+            [type]: parseFloat(value) || 0,
+          },
+        },
+      };
+    });
+  };
+
+  // Expanded settings state per machine
+  const [expandedSettings, setExpandedSettings] = useState({});
+
+  const toggleSettings = (machineId) => {
+    setExpandedSettings((prev) => ({
+      ...prev,
+      [machineId]: !prev[machineId],
+    }));
+  };
 
   // Dark mode state
   const [darkMode, setDarkMode] = useState(() => {
@@ -117,6 +201,18 @@ const PredictiveMaintenanceSystem = () => {
 
       setEquipment(eq);
       setSensorData(rows);
+
+      // Initialize sensor history from fetched data
+      const historyInit = {};
+      eq.forEach((machine) => {
+        const machineRows = rows
+          .filter((r) => r.equipmentId === machine.id)
+          .slice(-MAX_HISTORY_POINTS);
+        if (machineRows.length > 0) {
+          historyInit[machine.id] = machineRows;
+        }
+      });
+      setSensorHistory((prev) => ({ ...prev, ...historyInit }));
 
       // recompute derived outputs client-side
       performAnomalyDetection(rows, eq);
@@ -202,9 +298,6 @@ const PredictiveMaintenanceSystem = () => {
     }
   };
 
-  // ----------------------------
-  // Add Machine Functions
-  // ----------------------------
   const openAddModal = async () => {
     setIsAddModalOpen(true);
     try {
@@ -537,16 +630,107 @@ const PredictiveMaintenanceSystem = () => {
     a.click();
   };
 
-  const getChartData = (equipmentId) => {
-    return sensorData
-      .filter((d) => d.equipmentId === equipmentId)
-      .slice(-24)
-      .map((d) => ({
-        time: new Date(d.timestamp).toLocaleTimeString(),
-        temperature: Number(d.temperature).toFixed(1),
-        vibration: Number(d.vibration).toFixed(2),
-        pressure: Number(d.pressure).toFixed(1),
-      }));
+  // Per-machine data points setting
+  const [chartPointsConfig, setChartPointsConfig] = useState({});
+  const DATA_POINT_OPTIONS = [10, 20, 30, 50];
+
+  const getChartPoints = (machineId) => chartPointsConfig[machineId] || 30;
+
+  const getChartData = (equipmentId, numPoints) => {
+    // Use accumulated history if available, fallback to sensorData
+    const history = sensorHistory[equipmentId] || [];
+    const dataSource = history.length > 0 ? history : sensorData.filter((d) => d.equipmentId === equipmentId);
+    const thresholds = getThresholds(equipmentId);
+    const pointsToShow = numPoints || getChartPoints(equipmentId);
+    
+    // Get machine type to determine if pressure is inverted (lower = worse)
+    const machine = equipment.find((eq) => eq.id === equipmentId);
+    const machineType = machine?.type || 'default';
+    // For CNC and TE, lower pressure = worse, so we invert the comparison
+    const pressureInverted = machineType === 'CNC' || machineType === 'TE';
+    
+    return dataSource
+      .slice(-pointsToShow)
+      .map((d, idx) => {
+        const temp = Number(d.temperature);
+        const vib = Number(d.vibration);
+        const press = Number(d.pressure);
+        
+        // Determine severity based on thresholds
+        // Logic: value < warning = normal, warning <= value < critical = medium, value >= critical = critical
+        // For inverted sensors (pressure on CNC/TE): value > warning = normal, warning >= value > critical = medium, value <= critical = critical
+        let severity = "normal";
+        
+        // Check temperature (higher = worse)
+        const tempCritical = temp >= thresholds.temperature.critical;
+        const tempWarning = temp >= thresholds.temperature.warning && temp < thresholds.temperature.critical;
+        
+        // Check vibration (higher = worse)
+        const vibCritical = vib >= thresholds.vibration.critical;
+        const vibWarning = vib >= thresholds.vibration.warning && vib < thresholds.vibration.critical;
+        
+        // Check pressure - direction depends on machine type
+        let pressCritical, pressWarning;
+        if (pressureInverted) {
+          // Lower pressure = worse (CNC, TE)
+          pressCritical = press <= thresholds.pressure.critical;
+          pressWarning = press <= thresholds.pressure.warning && press > thresholds.pressure.critical;
+        } else {
+          // Higher pressure = worse (AC, default)
+          pressCritical = press >= thresholds.pressure.critical;
+          pressWarning = press >= thresholds.pressure.warning && press < thresholds.pressure.critical;
+        }
+        
+        // Determine overall severity (worst wins)
+        if (tempCritical || vibCritical || pressCritical) {
+          severity = "critical";
+        } else if (tempWarning || vibWarning || pressWarning) {
+          severity = "medium";
+        }
+        
+        return {
+          time: new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          temperature: temp.toFixed(1),
+          vibration: vib.toFixed(2),
+          pressure: press.toFixed(1),
+          severity,
+          idx,
+        };
+      });
+  };
+
+  // Calculate alert regions for chart highlighting (using index-based positioning)
+  const getAlertRegions = (chartData) => {
+    const regions = [];
+    let currentRegion = null;
+
+    chartData.forEach((point, idx) => {
+      if (point.severity === "critical" || point.severity === "medium") {
+        if (!currentRegion || currentRegion.severity !== point.severity) {
+          if (currentRegion) {
+            regions.push(currentRegion);
+          }
+          currentRegion = {
+            x1Index: idx,
+            x2Index: idx,
+            severity: point.severity,
+          };
+        } else {
+          currentRegion.x2Index = idx;
+        }
+      } else {
+        if (currentRegion) {
+          regions.push(currentRegion);
+          currentRegion = null;
+        }
+      }
+    });
+
+    if (currentRegion) {
+      regions.push(currentRegion);
+    }
+
+    return regions;
   };
 
   // ----------------------------
@@ -560,6 +744,58 @@ const PredictiveMaintenanceSystem = () => {
     fetchTurbofanPrediction();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ----------------------------
+  // Auto-simulation polling
+  // ----------------------------
+  useEffect(() => {
+    if (!autoSimEnabled || equipment.length === 0) return;
+
+    const interval = setInterval(() => {
+      // Fetch new data point for each machine
+      fetchNewDataPoint();
+    }, AUTO_SIM_INTERVAL);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSimEnabled, equipment]);
+
+  // Fetch a single new data point and append to history
+  const fetchNewDataPoint = async () => {
+    try {
+      const res = await api.get("/api/synthetic/");
+      const rows = res.data.sensorData || [];
+
+      // Group latest reading per machine
+      const latestByMachine = {};
+      rows.forEach((row) => {
+        const existing = latestByMachine[row.equipmentId];
+        if (!existing || new Date(row.timestamp) > new Date(existing.timestamp)) {
+          latestByMachine[row.equipmentId] = row;
+        }
+      });
+
+      // Append to history
+      setSensorHistory((prev) => {
+        const next = { ...prev };
+        Object.entries(latestByMachine).forEach(([eqId, reading]) => {
+          const history = next[eqId] || [];
+          // Add new reading with current timestamp
+          const newReading = { ...reading, timestamp: new Date().toISOString() };
+          const updated = [...history, newReading].slice(-MAX_HISTORY_POINTS);
+          next[eqId] = updated;
+        });
+        return next;
+      });
+
+      // Also update predictions periodically
+      fetchAirCompressorPrediction();
+      fetchMillingPrediction();
+      fetchTurbofanPrediction();
+    } catch (e) {
+      console.error("Auto-sim fetch failed", e);
+    }
+  };
 
   // Regenerate predictions when ML data updates
   useEffect(() => {
@@ -619,7 +855,19 @@ const PredictiveMaintenanceSystem = () => {
               {loadErr && <p className="mt-2 text-sm text-red-600">{loadErr}</p>}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => setAutoSimEnabled(!autoSimEnabled)}
+                className={`px-4 py-3 rounded-lg flex items-center gap-2 transition-colors ${
+                  autoSimEnabled 
+                    ? "bg-green-600 text-white hover:bg-green-700" 
+                    : `${theme.card} ${theme.text} border ${theme.border} ${theme.hover}`
+                }`}
+                title={autoSimEnabled ? "Auto-simulation ON (10s)" : "Auto-simulation OFF"}
+              >
+                <Activity size={20} className={autoSimEnabled ? "animate-pulse" : ""} />
+                <span className="hidden md:inline">{autoSimEnabled ? "Live" : "Paused"}</span>
+              </button>
               <button
                 onClick={() => setDarkMode(!darkMode)}
                 className={`${theme.card} ${theme.text} px-3 py-3 rounded-lg ${theme.hover} border ${theme.border} transition-colors`}
@@ -828,7 +1076,7 @@ const PredictiveMaintenanceSystem = () => {
         {/* Navigation Tabs */}
         <div className={`${theme.card} rounded-lg shadow-md mb-6 transition-colors duration-200`}>
           <div className={`flex border-b ${theme.border} overflow-x-auto`}>
-            {["dashboard", "equipment", "predictions", "alerts", "settings"].map(
+            {["dashboard", "equipment", "predictions", "alerts"].map(
               (tab) => (
                 <button
                   key={tab}
@@ -994,44 +1242,220 @@ const PredictiveMaintenanceSystem = () => {
         {/* Equipment Tab (Details) */}
         {activeTab === "equipment" && (
           <div className="space-y-6">
+            {/* Live Status Banner */}
+            {autoSimEnabled && (
+              <div className="bg-green-500 text-white px-4 py-2 rounded-lg flex items-center gap-3 animate-pulse">
+                <Radio size={20} className="animate-ping" />
+                <span className="font-medium">LIVE DATA STREAMING</span>
+                <span className="text-green-100 text-sm">• Updating every 10 seconds</span>
+              </div>
+            )}
+
             {equipment.map((eq) => {
-              const chartData = getChartData(eq.id);
+              const currentPoints = getChartPoints(eq.id);
+              const chartData = getChartData(eq.id, currentPoints);
+              const alertRegions = getAlertRegions(chartData);
+              const thresholds = getThresholds(eq.id);
+              const isSettingsOpen = expandedSettings[eq.id];
+              const historyCount = (sensorHistory[eq.id] || []).length;
+
               return (
                 <div key={eq.id} className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
-                  <h2 className={`text-xl font-bold ${theme.text} mb-4`}>
-                    {eq.name} <span className={theme.textMuted}>({eq.id})</span>
-                  </h2>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <h2 className={`text-xl font-bold ${theme.text}`}>
+                        {eq.name} <span className={theme.textMuted}>({eq.id})</span>
+                      </h2>
+                      {autoSimEnabled && (
+                        <span className="flex items-center gap-1 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                          <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                          Live
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {/* Data points selector */}
+                      <div className="flex items-center gap-1">
+                        <span className={`text-xs ${theme.textMuted}`}>Show:</span>
+                        <select
+                          value={currentPoints}
+                          onChange={(e) => setChartPoints(eq.id, parseInt(e.target.value))}
+                          className={`text-sm px-2 py-1 rounded border ${theme.input} ${theme.border}`}
+                        >
+                          {DATA_POINT_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>{opt} pts</option>
+                          ))}
+                        </select>
+                      </div>
+                      <span className={`text-sm ${theme.textMuted}`}>
+                        {historyCount} total
+                      </span>
+                      <button
+                        onClick={() => toggleSettings(eq.id)}
+                        className={`p-2 rounded-lg transition-colors ${
+                          isSettingsOpen 
+                            ? "bg-blue-100 text-blue-600" 
+                            : `${theme.hover} ${theme.textMuted}`
+                        }`}
+                        title="Configure thresholds"
+                      >
+                        <Settings size={20} />
+                      </button>
+                    </div>
+                  </div>
 
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="time" />
-                      <YAxis />
-                      <Tooltip />
+                  <ResponsiveContainer width="100%" height={350}>
+                    <LineChart data={chartData} margin={{ bottom: 60 }}>
+                      <defs>
+                        <linearGradient id={`criticalGradient-${eq.id}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fecaca" stopOpacity={0.8} />
+                          <stop offset="100%" stopColor="#fecaca" stopOpacity={0.3} />
+                        </linearGradient>
+                        <linearGradient id={`warningGradient-${eq.id}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fed7aa" stopOpacity={0.8} />
+                          <stop offset="100%" stopColor="#fed7aa" stopOpacity={0.3} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? "#4b5563" : "#e5e7eb"} />
+                      <XAxis 
+                        dataKey="time" 
+                        stroke={darkMode ? "#9ca3af" : "#6b7280"} 
+                        fontSize={10}
+                        interval={0}
+                        angle={-45}
+                        textAnchor="end"
+                        height={60}
+                        tick={{ dy: 10 }}
+                      />
+                      <YAxis stroke={darkMode ? "#9ca3af" : "#6b7280"} fontSize={12} />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: darkMode ? "#374151" : "#fff",
+                          border: darkMode ? "1px solid #4b5563" : "1px solid #e5e7eb",
+                          color: darkMode ? "#f3f4f6" : "#111827"
+                        }}
+                        formatter={(value, name, props) => {
+                          const severity = props.payload?.severity;
+                          const color = severity === 'critical' ? '#dc2626' : severity === 'medium' ? '#ea580c' : undefined;
+                          return [value, name];
+                        }}
+                        labelFormatter={(label, payload) => {
+                          if (payload && payload[0]) {
+                            const severity = payload[0].payload?.severity;
+                            const statusText = severity === 'critical' ? ' ⚠️ CRITICAL' : severity === 'medium' ? ' ⚡ WARNING' : '';
+                            return `${label}${statusText}`;
+                          }
+                          return label;
+                        }}
+                      />
                       <Legend />
                       <Line
                         type="monotone"
                         dataKey="temperature"
                         stroke="#ef4444"
                         name="Temperature"
-                        dot={false}
+                        strokeWidth={2}
+                        dot={(props) => {
+                          const { cx, cy, payload } = props;
+                          if (payload.severity === 'critical') {
+                            return <circle cx={cx} cy={cy} r={4} fill="#dc2626" stroke="#fff" strokeWidth={1} />;
+                          } else if (payload.severity === 'medium') {
+                            return <circle cx={cx} cy={cy} r={3} fill="#ea580c" stroke="#fff" strokeWidth={1} />;
+                          }
+                          return null;
+                        }}
+                        isAnimationActive={false}
                       />
                       <Line
                         type="monotone"
                         dataKey="vibration"
                         stroke="#3b82f6"
                         name="Vibration"
-                        dot={false}
+                        strokeWidth={2}
+                        dot={(props) => {
+                          const { cx, cy, payload } = props;
+                          if (payload.severity === 'critical') {
+                            return <circle cx={cx} cy={cy} r={4} fill="#dc2626" stroke="#fff" strokeWidth={1} />;
+                          } else if (payload.severity === 'medium') {
+                            return <circle cx={cx} cy={cy} r={3} fill="#ea580c" stroke="#fff" strokeWidth={1} />;
+                          }
+                          return null;
+                        }}
+                        isAnimationActive={false}
                       />
                       <Line
                         type="monotone"
                         dataKey="pressure"
                         stroke="#10b981"
                         name="Pressure"
-                        dot={false}
+                        strokeWidth={2}
+                        dot={(props) => {
+                          const { cx, cy, payload } = props;
+                          if (payload.severity === 'critical') {
+                            return <circle cx={cx} cy={cy} r={4} fill="#dc2626" stroke="#fff" strokeWidth={1} />;
+                          } else if (payload.severity === 'medium') {
+                            return <circle cx={cx} cy={cy} r={3} fill="#ea580c" stroke="#fff" strokeWidth={1} />;
+                          }
+                          return null;
+                        }}
+                        isAnimationActive={false}
                       />
                     </LineChart>
                   </ResponsiveContainer>
+                  
+                  {/* Severity Legend */}
+                  <div className="flex items-center gap-4 mt-2 justify-center text-xs">
+                    <div className="flex items-center gap-1">
+                      <span className="w-3 h-3 rounded-full bg-red-600"></span>
+                      <span className={theme.textMuted}>Critical</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-3 h-3 rounded-full bg-orange-500"></span>
+                      <span className={theme.textMuted}>Warning</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+                      <span className={theme.textMuted}>Normal (no dot)</span>
+                    </div>
+                  </div>
+
+                  {/* Per-machine Settings Panel */}
+                  {isSettingsOpen && (
+                    <div className={`mt-4 pt-4 border-t ${theme.border}`}>
+                      <div className="flex items-center gap-2 mb-4">
+                        <Settings size={18} className={theme.textMuted} />
+                        <h3 className={`font-semibold ${theme.text}`}>Threshold Settings</h3>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {["temperature", "vibration", "pressure"].map((sensor) => (
+                          <div key={sensor} className={`p-3 rounded-lg border ${theme.border} ${darkMode ? 'bg-gray-600' : 'bg-gray-50'}`}>
+                            <h4 className={`font-medium ${theme.text} capitalize mb-2`}>{sensor}</h4>
+                            <div className="space-y-2">
+                              <div>
+                                <label className={`text-xs ${theme.textMuted}`}>Warning</label>
+                                <input
+                                  type="number"
+                                  value={thresholds[sensor]?.warning || 0}
+                                  onChange={(e) => updateMachineThreshold(eq.id, sensor, "warning", e.target.value)}
+                                  className={`w-full px-2 py-1 text-sm border rounded ${theme.input}`}
+                                />
+                              </div>
+                              <div>
+                                <label className={`text-xs ${theme.textMuted}`}>Critical</label>
+                                <input
+                                  type="number"
+                                  value={thresholds[sensor]?.critical || 0}
+                                  onChange={(e) => updateMachineThreshold(eq.id, sensor, "critical", e.target.value)}
+                                  className={`w-full px-2 py-1 text-sm border rounded ${theme.input}`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1280,90 +1704,6 @@ const PredictiveMaintenanceSystem = () => {
                   </div>
                 ))
               )}
-            </div>
-          </div>
-        )}
-
-        {/* Settings Tab */}
-        {activeTab === "settings" && (
-          <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
-            <h2 className={`text-xl font-bold ${theme.text} mb-6`}>Threshold Configuration</h2>
-
-            <p className={`text-sm ${theme.textMuted} mb-4`}>
-              Note: thresholds are currently only UI placeholders. Anomaly detection now uses
-              per-machine z-score baselines.
-            </p>
-
-            <div className="space-y-6">
-              {Object.entries(thresholds).map(([sensor, values]) => (
-                <div key={sensor} className={`border ${theme.border} rounded-lg p-4 ${darkMode ? 'bg-gray-600' : ''}`}>
-                  <h3 className={`font-semibold ${theme.text} mb-4 capitalize`}>{sensor}</h3>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-sm font-medium ${theme.textMuted} mb-2`}>
-                        Warning Threshold
-                      </label>
-                      <input
-                        type="number"
-                        value={values.warning}
-                        onChange={(e) =>
-                          setThresholds((prev) => ({
-                            ...prev,
-                            [sensor]: {
-                              ...prev[sensor],
-                              warning: parseFloat(e.target.value),
-                            },
-                          }))
-                        }
-                        className={`w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 ${theme.input}`}
-                      />
-                    </div>
-
-                    <div>
-                      <label className={`block text-sm font-medium ${theme.textMuted} mb-2`}>
-                        Critical Threshold
-                      </label>
-                      <input
-                        type="number"
-                        value={values.critical}
-                        onChange={(e) =>
-                          setThresholds((prev) => ({
-                            ...prev,
-                            [sensor]: {
-                              ...prev[sensor],
-                              critical: parseFloat(e.target.value),
-                            },
-                          }))
-                        }
-                        className={`w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 ${theme.input}`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => {
-                  fetchSyntheticData();
-                  fetchAirCompressorPrediction();
-                  fetchMillingPrediction();
-                  fetchTurbofanPrediction();
-                }}
-                className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                Apply & Reanalyze
-              </button>
-
-              <button
-                onClick={() => exportData("sensor")}
-                className="px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center gap-2"
-              >
-                <Download size={16} />
-                Export All Data
-              </button>
             </div>
           </div>
         )}
