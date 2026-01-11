@@ -506,12 +506,27 @@ def add_machine_with_data(request):
     # Check for alerts
     check_and_send_alert(request.user, machine.machine_id, name, prediction)
 
+    # Format sensor data for frontend graph (last 50 points)
+    formatted_sensor_data = []
+    for i, row in enumerate(sensor_rows[-50:]):
+        formatted_sensor_data.append({
+            "equipmentId": machine.machine_id,
+            "equipmentName": name,
+            "timestamp": row.get("timestamp", f"2024-01-01T{i:02d}:00:00Z"),
+            "temperature": row.get("temperature", 0),
+            "vibration": row.get("vibration", 0),
+            "pressure": row.get("pressure", 0),
+            "powerConsumption": row.get("power", 0),
+        })
+
     return Response({
         "id": machine.machine_id,
         "name": machine.name,
         "type": machine.type.name,
+        "typeId": type_id,
         "prediction": prediction,
         "dataRowsProcessed": len(sensor_rows),
+        "sensorData": formatted_sensor_data,
     }, status=201)
 
 

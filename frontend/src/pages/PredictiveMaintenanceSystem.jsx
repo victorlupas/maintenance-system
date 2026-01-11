@@ -355,6 +355,14 @@ const PredictiveMaintenanceSystem = () => {
             },
           }));
         }
+
+        // Initialize sensor history with uploaded data for the graph
+        if (result.sensorData && result.sensorData.length > 0 && result.id) {
+          setSensorHistory((prev) => ({
+            ...prev,
+            [result.id]: result.sensorData,
+          }));
+        }
       } else {
         // Use regular endpoint (synthetic data)
         await api.post("/api/machines/add/", {
