@@ -18,6 +18,7 @@ import {
   Calendar,
   Download,
   LogOut,
+  Lock,
   Plus,
   X,
   Trash2,
@@ -67,6 +68,15 @@ const PredictiveMaintenanceSystem = () => {
   const [autoSimEnabled, setAutoSimEnabled] = useState(true);
   const AUTO_SIM_INTERVAL = 10000; // 10 seconds
   const MAX_HISTORY_POINTS = 50; // Keep last 50 data points per machine
+  
+  // Change Password Modal State
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changePasswordError, setChangePasswordError] = useState("");
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Auth UI
   const [me, setMe] = useState(null);
@@ -186,6 +196,67 @@ const PredictiveMaintenanceSystem = () => {
       localStorage.removeItem("refresh");
       navigate("/login");
     }
+  };
+
+    const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setChangePasswordError("");
+    setChangePasswordSuccess("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setChangePasswordError("All fields are required");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setChangePasswordError("New passwords do not match");
+      return;
+    }
+
+    try {
+      setIsChangingPassword(true);
+      await api.post("/api/auth/change-password/", {
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      });
+      
+      setChangePasswordSuccess("Password changed successfully!");
+      setTimeout(() => {
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setIsChangePasswordModalOpen(false);
+        setChangePasswordSuccess("");
+      }, 1500);
+    } catch (error) {
+      const messages = error.response?.data?.detail;
+      if (Array.isArray(messages)) {
+        setChangePasswordError(messages);
+      } else {
+        setChangePasswordError(messages || "Failed to change password");
+      }
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const openChangePasswordModal = () => {
+    setChangePasswordError("");
+    setChangePasswordSuccess("");
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setIsChangePasswordModalOpen(true);
+  };
+
+  const closeChangePasswordModal = () => {
+    setIsChangePasswordModalOpen(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setChangePasswordError("");
+    setChangePasswordSuccess("");
   };
 
   // ----------------------------
@@ -858,6 +929,14 @@ const PredictiveMaintenanceSystem = () => {
                 >
                   <LogOut size={16} /> Logout
                 </button>
+
+                <button
+                  onClick={openChangePasswordModal}
+                  className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded border ${theme.border} ${theme.text} ${theme.hover}`}
+                  title="Change Password"
+                >
+                  <Lock size={16} /> Password
+                </button>
               </div>
 
               {loadErr && <p className="mt-2 text-sm text-red-600">{loadErr}</p>}
@@ -1066,6 +1145,7 @@ const PredictiveMaintenanceSystem = () => {
                       {isAdding ? (
                         "Processing..."
                       ) : dataFile ? (
+                        
                         <>
                           <Upload size={18} />
                           Add Machine & Analyze Data
@@ -1076,6 +1156,104 @@ const PredictiveMaintenanceSystem = () => {
                     </button>
                   </div>
                 )}
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal for Changing Password */}
+        {isChangePasswordModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+            <div className={`${theme.card} rounded-lg shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200`}>
+              <button
+                onClick={closeChangePasswordModal}
+                className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}
+              >
+                <X size={24} />
+              </button>
+
+              <h2 className={`text-xl font-bold ${theme.text} mb-4 flex items-center gap-2`}>
+                <Lock className="text-blue-600" /> Change Password
+              </h2>
+
+              {changePasswordSuccess && (
+                <div className="mb-4 p-3 rounded bg-green-100 text-green-800 text-sm">
+                  ✓ {changePasswordSuccess}
+                </div>
+              )}
+
+              {changePasswordError && (
+                <div className="mb-4 p-3 rounded bg-red-100 text-red-800 text-sm space-y-1">
+                  {Array.isArray(changePasswordError) ? (
+                    changePasswordError.map((msg, idx) => <div key={idx}>{msg}</div>)
+                  ) : (
+                    changePasswordError.split(", ").map((msg, idx) => <div key={idx}>{msg}</div>)
+                  )}
+                </div>
+              )}
+
+              <form onSubmit={handleChangePassword} className="space-y-4">
+                <div>
+                  <label className={`block text-sm font-medium ${theme.text} mb-1`}>
+                    Current Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter current password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className={`w-full border ${theme.border} rounded-lg px-3 py-2 ${theme.text} bg-transparent focus:ring-2 focus:ring-blue-500 outline-none`}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium ${theme.text} mb-1`}>
+                    New Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter new password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className={`w-full border ${theme.border} rounded-lg px-3 py-2 ${theme.text} bg-transparent focus:ring-2 focus:ring-blue-500 outline-none`}
+                  />
+                  <p className={`text-xs ${theme.textMuted} mt-1`}>
+                    Min 6 chars, 1 uppercase, 1 lowercase, 1 digit, 1 symbol
+                  </p>
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium ${theme.text} mb-1`}>
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Confirm new password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className={`w-full border ${theme.border} rounded-lg px-3 py-2 ${theme.text} bg-transparent focus:ring-2 focus:ring-blue-500 outline-none`}
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isChangingPassword}
+                    className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium"
+                  >
+                    {isChangingPassword ? "Updating..." : "Change Password"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeChangePasswordModal}
+                    className={`flex-1 px-4 py-2 rounded-lg border ${theme.border} ${theme.text} ${theme.hover} font-medium`}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </form>
             </div>
           </div>
