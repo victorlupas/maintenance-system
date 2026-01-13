@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/machines/<str:machine_id>/delete/", delete_machine),
     path("api/auth/register/", register),
     path("api/auth/logout/", logout),
+    path("api/auth/change-password/", change_password),
     path("api/auth/me/", me),
 
     path("api/predictions/air-compressor/", air_compressor_prediction),

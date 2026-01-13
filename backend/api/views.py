@@ -175,6 +175,65 @@ def register(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def change_password(request):
+    """
+    Change password for authenticated user.
+    Requires: current_password, new_password, confirm_password
+    """
+    try:
+        current_password = request.data.get("current_password") or ""
+        new_password = request.data.get("new_password") or ""
+        confirm_password = request.data.get("confirm_password") or ""
+        
+        user = request.user
+        
+        # 1. Validate current password
+        if not user.check_password(current_password):
+            return Response(
+                {"detail": "Current password is incorrect"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # 2. Validate new password (complexity rules)
+        try:
+            validate_password(new_password)
+        except ValidationError as e:
+            return Response(
+                {"detail": list(e.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # 3. Validate passwords match
+        if new_password != confirm_password:
+            return Response(
+                {"detail": "New passwords do not match"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # 4. Prevent using same password
+        if current_password == new_password:
+            return Response(
+                {"detail": "New password must be different from current password"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        # 5. Set new password and save
+        user.set_password(new_password)
+        user.save()
+        
+        return Response(
+            {"detail": "Password changed successfully"},
+            status=status.HTTP_200_OK,
+        )
+        
+    except Exception as e:
+        return Response(
+            {"detail": "An error occurred. Please try again"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def logout(request):
     """
     Blacklist the refresh token to invalidate it immediately.
