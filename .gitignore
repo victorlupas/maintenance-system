@@ -9,4 +9,3 @@ backend/data/*.json
 
 # keep folder
 !backend/data/.gitkeep
-backend/db.sqlite3

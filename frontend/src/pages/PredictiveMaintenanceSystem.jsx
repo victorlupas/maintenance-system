@@ -69,6 +69,9 @@ const PredictiveMaintenanceSystem = () => {
   const AUTO_SIM_INTERVAL = 10000; // 10 seconds
   const MAX_HISTORY_POINTS = 50; // Keep last 50 data points per machine
   
+  // Last updated timestamp
+  const [lastUpdated, setLastUpdated] = useState(null);
+  
   // Change Password Modal State
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -272,6 +275,7 @@ const PredictiveMaintenanceSystem = () => {
 
       setEquipment(eq);
       setSensorData(rows);
+      setLastUpdated(new Date());
 
       // Initialize sensor history from fetched data
       const historyInit = {};
@@ -988,6 +992,9 @@ const PredictiveMaintenanceSystem = () => {
         return next;
       });
 
+      // Update last updated timestamp
+      setLastUpdated(new Date());
+
       // Also update predictions periodically
       fetchAirCompressorPrediction();
       fetchMillingPrediction();
@@ -1009,6 +1016,33 @@ const PredictiveMaintenanceSystem = () => {
     () => alerts.filter((a) => !a.acknowledged).length,
     [alerts]
   );
+
+  // Calculate overall system health score (0-100)
+  const overallHealthScore = useMemo(() => {
+    if (equipment.length === 0) return 100;
+    
+    let totalScore = 0;
+    equipment.forEach((eq) => {
+      const ml = mlPredictions[eq.id];
+      if (ml) {
+        // Convert failure probability to health (lower failure = higher health)
+        const machineHealth = (1 - ml.probFailure) * 100;
+        totalScore += machineHealth;
+      } else {
+        // No prediction = assume healthy
+        totalScore += 100;
+      }
+    });
+    
+    return Math.round(totalScore / equipment.length);
+  }, [equipment, mlPredictions]);
+
+  // Get health score color
+  const getHealthColor = (score) => {
+    if (score >= 80) return "text-green-600";
+    if (score >= 60) return "text-yellow-600";
+    return "text-red-600";
+  };
 
   // Theme classes
   const theme = {
@@ -1404,8 +1438,31 @@ const PredictiveMaintenanceSystem = () => {
         {/* Dashboard Tab */}
         {activeTab === "dashboard" && (
           <div className="space-y-6">
+            {/* Last Updated Banner */}
+            {lastUpdated && (
+              <div className={`${theme.card} rounded-lg shadow-sm px-4 py-2 flex items-center justify-between transition-colors duration-200`}>
+                <span className={`text-sm ${theme.textMuted}`}>
+                  Last updated: {lastUpdated.toLocaleTimeString()} 
+                  {autoSimEnabled && <span className="ml-2 text-green-600">• Live</span>}
+                </span>
+              </div>
+            )}
+
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+              {/* Overall Health Score */}
+              <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={`${theme.textMuted} text-sm`}>System Health</p>
+                    <p className={`text-3xl font-bold ${getHealthColor(overallHealthScore)}`}>
+                      {overallHealthScore}%
+                    </p>
+                  </div>
+                  <CheckCircle className={getHealthColor(overallHealthScore)} size={32} />
+                </div>
+              </div>
+
               <div className={`${theme.card} rounded-lg shadow-md p-6 transition-colors duration-200`}>
                 <div className="flex items-center justify-between">
                   <div>
